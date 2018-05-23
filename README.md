@@ -1,4 +1,4 @@
-# ib-camping
+# Simple Monitor
 Simple Portfolio-Monitor for FA-Accounts on InteractiveBrokers
 
 The monitor is realized with 470 lines of code using ib-ruby and the camping micro-web-framework. 
