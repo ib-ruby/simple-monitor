@@ -1,7 +1,7 @@
 # Simple Monitor
 Simple Portfolio-Monitor for FA-Accounts on InteractiveBrokers
 
-The monitor is realized with 470 lines of code using ib-ruby and the camping micro-web-framework. 
+The monitor is realized with 470 lines of code using __`IB-Ruby`__ and the camping micro-web-framework. 
 You can select any detected Account. In addition to basic information, such as the NetLiquidation, the used Margin and available Cash, all portfolio-positions are displayed. A simple form to place an emergency-order is provided, too.
 
 Install Ruby 2.4+ (via rvm)
