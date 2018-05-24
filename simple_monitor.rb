@@ -22,7 +22,7 @@ module Ibo::Helpers
   def initialize_gw 
     if IB::Gateway.current.nil?
       host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
-      gw= IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('ib-camping.log') ) 
+      gw= IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('simple-monitor.log') ) 
       gw.logger.level=1
       gw.logger.formatter = proc do |severity, datetime, progname, msg|
 				"#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n"
