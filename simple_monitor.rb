@@ -6,14 +6,15 @@ require 'yaml'
 Camping.goes :Ibo
 
 module Ibo::Helpers
-  def account_name account, fill_in=true 
-    if account.alias != account.account 
-			account.alias
-		elsif File.exists?( 'tws_alias.yml') 
-      YAML.load_file('tws_alias.yml')[:user][account.account] 
-    else 
-      fill_in ? @account.account : " "
-    end
+  def account_name account , allow_blank: false
+		the_name = if File.exists?( 'tws_alias.yml') 
+								 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.account
+							 else 
+								 account.alias  # alias is set to account-number if no alias is given
+							 end
+		puts "TheName: #{the_name}"
+		puts "Allow Blank:  #{allow_blank}"
+    allow_blank && ( the_name == account.account)  ? "" :	the_name.presence || account.account
   end
   def get_account account_id  # returns an account-object
     initialize_gw.active_accounts.detect{|x| x.account == account_id }
@@ -151,144 +152,140 @@ module Ibo::Controllers
 end # module controller
 
 module Ibo::Views
-  def layout
-    html do
-      head do
-	title { "IB-Camping-Simple-Trading-Desk" }
-	 link :rel => 'stylesheet', :type => 'text/css', :href => '/styles.css', :media => 'screen'
-      end
-      show_index
-      body { self << yield }
-    end
-  end
-
-  def show_contracts
-    size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
-      sleep 1  # wait for data to populate
-  
-    table do
-      tr.exited do
-	td { "Contracts" }
-	@accounts.each{|a| td account_name(a) } if @accounts.present?
-      end
-      all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
-	tr do
-         td contract.to_human[1..-2] 
-	 @accounts.each{|a| td size[a,contract] } if @accounts.present?
-
-	end 
-      end
-   # end
-   # table do
-	tr.exited do
-	  td( colspan: [@accounts.size+1,7].max ){ 'Pending-Orders' }
-	end
-      @accounts.each do |a|
-	tr do
-	  if a.orders.present? 
-	    a.orders.each{|x| _order(x)} 
-	  else
-	      td account_name(a)
-	      td( colspan: @accounts.size ){ "No Pending Orders" }
-	  end
-	end
-      end
-    end
-  end
-
-  def show_account
-    table do
-      if @account.present? && @account.account_values.present? 
-	tr( class:  "lines") do
-
-	  td( colspan: 1) { @account.account }
-	  td( colspan: 3) { account_name(@account, false) }
-	  td.number( colspan: 3){ "Last Update: #{@account.last_updated.strftime("%d.%m. %X")}" } 
-	  _account_infos(@account)
-	  if @account_values.present?
-	    @account_values.each{|y| _details(y) unless y.last.empty? }  #y ::["FuturesPNL", [["-255", "BASE"], ["-255", "EUR"]]]
-	  end
-	end
-      end
-      if @account.present? && @account.portfolio_values.present?
-	tr.exited do
-	  td( colspan:2){ "Portfolio Positions" }
-	  td.number "Size"
-	  td.number "Price (Entry)"
-	  td.number "Price (Market)"
-	  td.number "Value (Market)"
-	  td.number "pnl"
-	  td { '&#160;' }
-	end
-
-	@account.portfolio_values.each{|x| _portfolio_position(x) }
-      end
-	tr.exited do
-	  td( colspan:8, align:'center' ) { 'Pending-Orders' }
-	end
-      IB::Gateway.current.for_active_accounts do |account|
-	account.orders.each{|x| _order(x)} if account.orders.present?
-      end
-    end
-  end
-
-  def contract_mask
-    input_row = ->( field , comment='' ) do
-      tr { td( field.capitalize); td { input type: :text, value: @contract[field] , name: field }; td comment }
-    end
-    show_account
-    form action: R(ContractX, @account.account), method: 'post' do
-      table do
-	tr.exited do
-	  td( colspan:3, align:'center' ) { 'Contract-Mask' }
-	end
-	tr { td( "Selected Account:" ); td( @account.account )}
-	tr do
-	  td "Predefined Contracts: "
-	  td do 
-	    select( name: 'predefined_contract', size:1 ) do 
-	      @account.contracts.each do |x| 
-		  if @contract.con_id == x.con_id
-			option( selected: 'selected',value: x.con_id){  x.to_human[1..-2] }
-		  else
-			option( value: x.con_id){  x.to_human[1..-2] }
-		  end 
-	      end # each
-	    end # select
-	  end #td
-	  if @message.present?
-	    td @message
-	  else
-	  td { input :type => 'submit', :class => 'submit', :value => 'Use'  }
-	  end
-	end
-	input_row['symbol', '(if empty predefined Contract will be used)']
-	input_row['currency', @contract.con_id.present? ? " con-id : #{@contract.con_id}" : '' ]
-	input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : '']
-	input_row['expiry', @contract.contract_detail.present? ? @contract.contract_detail.industry : '']
-	input_row['right', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
-	input_row['strike' ]
-	input_row['multiplier']
-	tr do
-	  td "Type"
-	  td do
-	    select( name: 'sec_type', size:1 ) do
-	      IB::Contract::Subclasses.each do |x,y| 
-		if @contract.sec_type == x.to_sym
-		  option( selected: 'selected' ){ x }
-		else
-		  option x
+	def layout
+		html do
+			head do
+				title { "IB-Camping-Simple-Trading-Desk" }
+				link :rel => 'stylesheet', :type => 'text/css', :href => '/styles.css', :media => 'screen'
+			end
+			show_index
+			body { self << yield }
 		end
-	      end
-	    end
-	  end
-	  td { input :type => 'submit', :class => 'submit', :value => 'Verify'  }
-	
-	end  # tr
-      end	  # table
-    end #form
-    _order_mask if @contract.con_id.present?
-  end # contract_mask
+	end
+
+	def show_contracts
+		size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
+		sleep 0.1  # wait for data to populate
+
+		table do
+			tr.exited do
+				td { "Contracts" }
+				@accounts.each{|a| td account_name(a) } if @accounts.present?
+			end
+			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
+				tr do
+					td contract.to_human[1..-2] 
+					@accounts.each{|a| td size[a,contract] } if @accounts.present?
+				end 
+			end
+			tr.exited do
+				td( colspan: [@accounts.size+1,7].max ){ 'Pending-Orders' }
+			end
+			@accounts.each do |a|
+				tr do
+					if a.orders.present? 
+						a.orders.each{|x| _order(x)} 
+					else
+						td account_name(a)
+						td( colspan: @accounts.size ){ "No Pending Orders" }
+					end
+				end
+			end
+		end
+	end
+
+	def show_account
+		table do
+			if @account.present? && @account.account_values.present? 
+				tr( class:  "lines") do
+					td( colspan: 1) { @account.account }
+					td( colspan: 3) { account_name  @account, allow_blank: true }
+					td.number( colspan: 3){ "Last Update: #{@account.last_updated.strftime("%d.%m. %X")}" } 
+					_account_infos(@account)
+					if @account_values.present?
+						@account_values.each{|y| _details(y) unless y.last.empty? }  #y ::["FuturesPNL", [["-255", "BASE"], ["-255", "EUR"]]]
+					end
+				end
+			end
+			if @account.present? && @account.portfolio_values.present?
+				tr.exited do
+					td( colspan:2){ "Portfolio Positions" }
+					td.number "Size"
+					td.number "Price (Entry)"
+					td.number "Price (Market)"
+					td.number "Value (Market)"
+					td.number "pnl"
+					td { '&#160;' }
+				end
+
+				@account.portfolio_values.each{|x| _portfolio_position(x) }
+			end
+			tr.exited do
+				td( colspan:8, align:'center' ) { 'Pending-Orders' }
+			end
+			IB::Gateway.current.for_active_accounts do |account|
+				account.orders.each{|x| _order(x)} if account.orders.present?
+			end
+		end
+	end
+
+	def contract_mask
+		input_row = ->( field , comment='' ) do
+			tr { td( field.capitalize); td { input type: :text, value: @contract[field] , name: field }; td comment }
+		end
+		show_account
+		form action: R(ContractX, @account.account), method: 'post' do
+			table do
+				tr.exited do
+					td( colspan:3, align:'center' ) { 'Contract-Mask' }
+				end
+				tr { td( "Selected Account:" ); td( @account.account )}
+				tr do
+					td "Predefined Contracts: "
+					td do 
+						select( name: 'predefined_contract', size:1 ) do 
+							@account.contracts.each do |x| 
+								if @contract.con_id == x.con_id
+									option( selected: 'selected',value: x.con_id){  x.to_human[1..-2] }
+								else
+									option( value: x.con_id){  x.to_human[1..-2] }
+								end 
+							end # each
+						end # select
+					end #td
+					if @message.present?
+						td @message
+					else
+						td { input :type => 'submit', :class => 'submit', :value => 'Use'  }
+					end
+				end
+				input_row['symbol', '(if empty predefined Contract will be used)']
+				input_row['currency', @contract.con_id.present? ? " con-id : #{@contract.con_id}" : '' ]
+				input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : '']
+				input_row['expiry', @contract.contract_detail.present? ? @contract.contract_detail.industry : '']
+				input_row['right', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
+				input_row['strike' ]
+				input_row['multiplier']
+				tr do
+					td "Type"
+					td do
+						select( name: 'sec_type', size:1 ) do
+							IB::Contract::Subclasses.each do |x,y| 
+								if @contract.sec_type == x.to_sym
+									option( selected: 'selected' ){ x }
+								else
+									option x
+								end
+							end
+						end
+					end
+					td { input :type => 'submit', :class => 'submit', :value => 'Verify'  }
+
+				end  # tr
+			end	  # table
+		end #form
+		_order_mask if @contract.con_id.present?
+	end # contract_mask
 
   def _order_mask
     form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
@@ -332,7 +329,7 @@ module Ibo::Views
 	  if status =='Connected'
 	    td 'Depot:'
 	    td { select( :name => 'account', :size => 1){
-			IB::Gateway.current.for_active_accounts{|x| option( :value => x.account){ account_name(x) } } } }
+			IB::Gateway.current.for_active_accounts{|x| option( :value => x.account){ account_name(x, allow_blank: false) } } } }
 	    td { input :type => 'submit', :class => 'submit', :value => 'Select Account' }
 	    td { a 'Contracts', href: R(StatusX, :contracts) }
 
@@ -412,8 +409,6 @@ module Ibo::Views
     td(colspan:2){ av.key.to_s + ': ' + 
      ActiveSupport::NumberHelper.number_to_currency( av.value, precision:0, unit: av.currency, format: '%n %u' ).to_s }
   end 
-
-
 
    def _portfolio_position(pp)
      tr do

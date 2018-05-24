@@ -1,8 +1,8 @@
 ---
 #:host: 10.222.148.177:7496
-:host: localhost:7496
+:host: localhost
 # only needed if no account alias is specified in TWS
 :user: 
  DU167348: FirstUser
- DU167349: SecondUser
+# DU167349: SecondUser
 
