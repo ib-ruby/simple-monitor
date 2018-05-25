@@ -12,8 +12,6 @@ module Ibo::Helpers
 							 else 
 								 account.alias  # alias is set to account-number if no alias is given
 							 end
-		puts "TheName: #{the_name}"
-		puts "Allow Blank:  #{allow_blank}"
     allow_blank && ( the_name == account.account)  ? "" :	the_name.presence || account.account
   end
   def get_account account_id  # returns an account-object
