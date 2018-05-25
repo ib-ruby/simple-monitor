@@ -9,8 +9,8 @@ Initialize with `bundle install` following with `bundle update`
 
 Start a TWS or a Gateway with multible Accounts (A Demo-Account is prefered)
 
-Edit tws-alias.yml  and change the `:host`-Entry to the host running the TWS/Gateway (eg. 'localhost:7496').
-If a connection is made with the Gateway, specify that port, too, eg 'localhost:4001'
+Edit tws-alias.yml  and change the `:host`-Entry to the host running the TWS/Gateway (eg. `localhost:7496`).
+If a connection is made with the Gateway, specify that port, too, eg `localhost:4001`
 
 Run the camping-Server 
 ```
