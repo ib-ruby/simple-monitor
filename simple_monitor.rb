@@ -8,11 +8,11 @@ Camping.goes :Ibo
 module Ibo::Helpers
   def account_name account , allow_blank: false
 		the_name = if File.exists?( 'tws_alias.yml') 
-								 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.account
+								 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.alias
 							 else 
 								 account.alias  # alias is set to account-number if no alias is given
 							 end
-    allow_blank && ( the_name == account.account)  ? "" :	the_name.presence || account.account
+    allow_blank && ( the_name == account.account)  ? "" :	the_name.presence || account.alias
   end
   def get_account account_id  # returns an account-object
     initialize_gw.active_accounts.detect{|x| x.account == account_id }
@@ -21,7 +21,7 @@ module Ibo::Helpers
     if IB::Gateway.current.nil?
       host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
       gw= IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('simple-monitor.log') ) 
-      gw.logger.level=1
+      gw.logger.level=Logger::INFO
       gw.logger.formatter = proc do |severity, datetime, progname, msg|
 				"#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n"
       end
@@ -33,7 +33,7 @@ module Ibo::Helpers
   def all_contracts *sort
     sort = [ :sec_type ] if sort.empty?
     sort.map!{ |x| x.is_a?(Symbol) ? x : x.to_sym  }
-		IB::Gateway.current.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } if IB::Gateway.current.present?
+		initialize_gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
   end
 end
 
@@ -104,7 +104,7 @@ module Ibo::Controllers
 			@contract = if @input['symbol'].empty?
 										@account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
 									else
-										puts input.inspect
+										puts @input.inspect
 										@input[:right] = @input['right'][0].upcase if @input['sec_type']=='option'
 										@input[:sec_type] = @input['sec_type'].to_sym
 										IB::Contract.build @input.reject{|x| ['predefined_contract','right','sec_type'].include?(x) }
