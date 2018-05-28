@@ -104,7 +104,7 @@ module Ibo::Controllers
 			@contract = if @input['symbol'].empty?
 										@account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
 									else
-										puts @input.inspect
+										#puts @input.inspect
 										@input[:right] = @input['right'][0].upcase if @input['sec_type']=='option'
 										@input[:sec_type] = @input['sec_type'].to_sym
 										IB::Contract.build @input.reject{|x| ['predefined_contract','right','sec_type'].include?(x) }
@@ -133,6 +133,9 @@ module Ibo::Controllers
 		def post account_id, con_id
 			account =  get_account account_id 
 			contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
+				@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
+				@input['action'] =  :buy if @input["action"] == 'close'
+				@input.total_quantity =  @input.total_quantity.to_i.abs
 			puts "ORDER INPUT :: #{@input.inspect}"
 			account.place_order order: IB::Order.new(@input), contract:contract
 			redirect Index
@@ -262,8 +265,9 @@ module Ibo::Views
 				input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : '']
 				input_row['expiry', @contract.contract_detail.present? ? @contract.contract_detail.industry : '']
 				input_row['right', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
-				input_row['strike' ]
-				input_row['multiplier']
+				input_row['strike', @contract.strike.to_i > 0 ? @contract.strike : '']
+				input_row['multiplier', @contract.multiplier.to_i >0  ? @contract.multiplier : '']
+
 				tr do
 					td "Type"
 					td do
@@ -286,37 +290,45 @@ module Ibo::Views
 	end # contract_mask
 
   def _order_mask
+		position_exists = -> do 
+			position = @account.contracts.find{|x| x.con_id == @contract.con_id}
+			position.present? ? position.portfolio_values.first : nil 
+		end
+
     form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
 
-      table do
-	tr.exited do
-	  td( colspan:6, align:'center' ) { 'Order-Mask' }
-	end
-	tr do
-	  td
-	  td { [ input( type: :radio, name: 'action' , value: 'buy', checked:'checked')  , '  Buy'].join }
-	  td { [ input( type: :radio, name: 'action' , value: 'sell')  , '  Sell'].join }
-	  td { [ input( type: :checkbox, value: 'true' , name: 'what_if')  , 'WhatIf'].join }
-	  td { [ input( type: :checkbox, value: 'true' , name: 'transmit', checked:'checked')  , 'Transmit'].join }
-	end
-	tr do
-	  td 'Size'
-	  td { input type: :text, value: '' , name: 'total_quantity' };
-	  td '(Limit) Price'
-	  td { input type: :text, value: '' , name: 'limit_price' };
-	  td '(Aux) Price'
-	  td { input type: :text, value: '' , name: 'aux_price' };
-	end
-	tr do
-	  td 'Order Type'
-	  td { select( name: "order_type", size:1){ IB::ORDER_TYPES.each{ |a,b| option( value: a){ b } } } }
-	  td 'Validity'
-	  td { select( name: 'tif', size:1){[ "GTC", "DAY" ].each{|x| option x }} }
-	  td { input :type => 'submit', :class => 'submit', :value => 'submit' }
-	end
-      end
-    end
-  end 
+			table do
+				tr.exited do
+					td
+					td @contract.symbol  # {"#{@contract.to_human }" }
+					td( colspan: 4, align: 'left' ) { 'Order-Mask' }
+				end
+				tr do
+					td
+					td { [ input( type: :radio, name: 'action' , value: 'buy', checked:'checked')  , '  Buy'].join }
+					td { [ input( type: :radio, name: 'action' , value: 'sell')  , '  Sell'].join }
+					td { [ input( type: :radio, name: 'action' , value: 'close', checked:'checked')  , '  Close'].join } if  position_exists[]
+					td { [ input( type: :checkbox, value: 'true' , name: 'what_if')  , 'WhatIf'].join }
+					td { [ input( type: :checkbox, value: 'true' , name: 'transmit', checked:'checked')  , 'Transmit'].join }
+				end
+				tr do
+					td 'Size'
+					td { input type: :text, value: position_exists[].present? ?  -position_exists[].position.to_i : '' , name: 'total_quantity' };
+					td '(Limit) Price'
+					td { input type: :text, value: '' , name: 'limit_price' };
+					td '(Aux) Price'
+					td { input type: :text, value: '' , name: 'aux_price' };
+				end
+				tr do
+					td 'Order Type'
+					td { select( name: "order_type", size:1){ IB::ORDER_TYPES.each{ |a,b| option( value: a){ b } } } }
+					td 'Validity'
+					td { select( name: 'tif', size:1){[ "GTC", "DAY" ].each{|x| option x }} }
+					td { input :type => 'submit', :class => 'submit', :value => 'submit' }
+				end
+			end
+		end
+	end 
 
   def show_index
     form action: R(SelectAccount), method: 'post' do
