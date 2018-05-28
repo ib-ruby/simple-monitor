@@ -2,7 +2,7 @@
 Simple Portfolio-Monitor for FA-Accounts on InteractiveBrokers
 
 The monitor is realized with 470 lines of code using __`IB-Ruby`__ and the camping micro-web-framework. 
-You can select any detected Account. In addition to basic information, such as the NetLiquidation, the used Margin and available Cash, all portfolio-positions are displayed. A simple form to place an emergency-order is provided, too.
+You can select any detected Account. In addition to basic information, such as the NetLiquidation, the used Margin and available Cash, all portfolio-positions are displayed. A simple form to place an emergency-order (i.e. a "Close-Position"-Feature) is provided, too.
 
 Install Ruby 2.4+ (via rvm)
 Initialize with `bundle install` following with `bundle update`
@@ -10,7 +10,8 @@ Initialize with `bundle install` following with `bundle update`
 Start a TWS or a Gateway with multible Accounts (A Demo-Account is prefered)
 
 Edit tws-alias.yml  and change the `:host`-Entry to the host running the TWS/Gateway (eg. `localhost:7496`).
-If a connection is made with the Gateway, specify that port, too, eg `localhost:4001`
+If a connection is made with the Gateway, specify that port, too, eg `localhost:4001`. If no Account-Alias is set in 
+Account-Management, a local Alias can defined in the yaml-dataset.
 
 Run the camping-Server 
 ```
