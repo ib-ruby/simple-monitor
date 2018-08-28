@@ -20,7 +20,7 @@ module Ibo::Helpers
   def initialize_gw 
     if IB::Gateway.current.nil?
       host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
-      gw= IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('simple-monitor.log') ) 
+      gw = IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('simple-monitor.log') ) 
       gw.logger.level=Logger::INFO
       gw.logger.formatter = proc do |severity, datetime, progname, msg|
 				"#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n"
@@ -47,7 +47,7 @@ module Ibo::Controllers
 
   class StatusX
     def get action
-      ib= initialize_gw  # make sure that everything is initialized
+      ib = initialize_gw  # make sure that everything is initialized
       account_data = -> {ib.get_account_data; ib.update_orders;  }
       rendered = false
       view_to_render = :show_account 
@@ -87,9 +87,8 @@ module Ibo::Controllers
       render :show_account
     end
 
-    def post 
-      ib =  initialize_gw
-      @account = ib.active_accounts.detect{|x| x.account == @input['account']}
+    def post
+      @account = initialize_gw.active_accounts.detect{|x| x.account == @input['account']}
       @contract = IB::Stock.new
       init_account_values
       render :contract_mask
@@ -99,7 +98,7 @@ module Ibo::Controllers
   class ContractX # < R '/contract/(\d+)/select'
     def post account_id
       # if symbol is specified, search for the contract, otherwise use predefined contract
-        @account =get_account account_id 
+        @account = get_account account_id 
 	@contract = if @input['symbol'].empty?
 	               @account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
 		    else
