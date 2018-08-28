@@ -7,11 +7,11 @@ Camping.goes :Ibo
 
 module Ibo::Helpers
   def account_name account , allow_blank: false
-		the_name = if File.exists?( 'tws_alias.yml') 
-								 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.alias
-							 else 
-								 account.alias  # alias is set to account-number if no alias is given
-							 end
+    the_name = if File.exists?( 'tws_alias.yml') 
+		 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.alias
+	       else 
+		 account.alias  # alias is set to account-number if no alias is given
+	       end
     allow_blank && ( the_name == account.account)  ? "" :	the_name.presence || account.alias
   end
   def get_account account_id  # returns an account-object
@@ -50,7 +50,6 @@ module Ibo::Controllers
       ib= initialize_gw  # make sure that everything is initialized
       account_data = -> {ib.get_account_data; ib.update_orders;  }
       rendered = false
-
       view_to_render = :show_account 
       case action.split('/').first.to_sym
 			when :disconnect
@@ -89,7 +88,7 @@ module Ibo::Controllers
     end
 
     def post 
-			ib =  initialize_gw
+      ib =  initialize_gw
       @account = ib.active_accounts.detect{|x| x.account == @input['account']}
       @contract = IB::Stock.new
       init_account_values
@@ -100,47 +99,47 @@ module Ibo::Controllers
   class ContractX # < R '/contract/(\d+)/select'
     def post account_id
       # if symbol is specified, search for the contract, otherwise use predefined contract
-      @account =get_account account_id 
-			@contract = if @input['symbol'].empty?
-										@account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
-									else
-										#puts @input.inspect
-										@input[:right] = @input['right'][0].upcase if @input['sec_type']=='option'
-										@input[:sec_type] = @input['sec_type'].to_sym
-										IB::Contract.build @input.reject{|x| ['predefined_contract','right','sec_type'].include?(x) }
-									end
-      @contract.verify!
-			@message = if @contract.nil? || @contract.con_id.to_i.zero?  
-										 @contract ||= IB::Stock.new
-										 "Not a valid contract, details in Log" 
-									 else
-										 ""
-									 end
+        @account =get_account account_id 
+	@contract = if @input['symbol'].empty?
+	               @account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
+		    else
+			#puts @input.inspect
+			@input[:right] = @input['right'][0].upcase if @input['sec_type']=='option'
+			@input[:sec_type] = @input['sec_type'].to_sym
+			IB::Contract.build @input.reject{|x| ['predefined_contract','right','sec_type'].include?(x) }
+		    end
+       @contract.verify!
+       @message = if @contract.nil? || @contract.con_id.to_i.zero?  
+                     @contract ||= IB::Stock.new
+		     "Not a valid contract, details in Log" 
+		  else
+         	     ""
+                  end
       @account.contracts.update_or_create( @contract  ) unless @contract.con_id.to_i.zero?
       render  :contract_mask
     end
   end
 
-	class OrderXN 
-		def get account_id, local_id
-			account = get_account account_id 
-			order = account.orders.detect{|x| x.local_id == local_id.to_i }
-			IB::Gateway.current.cancel_order order.local_id if order.is_a? IB::Order
-			sleep 1 
+  class OrderXN 
+    def get account_id, local_id
+	account = get_account account_id 
+	order = account.orders.detect{|x| x.local_id == local_id.to_i }
+	IB::Gateway.current.cancel_order order.local_id if order.is_a? IB::Order
+	sleep 1 
 
-			redirect Index
-		end
-		def post account_id, con_id
-			account =  get_account account_id 
-			contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
-				@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
-				@input['action'] =  :buy if @input["action"] == 'close'
-				@input.total_quantity =  @input.total_quantity.to_i.abs
-			puts "ORDER INPUT :: #{@input.inspect}"
-			account.place_order order: IB::Order.new(@input), contract:contract
-			redirect Index
-		end
-	end
+	redirect Index
+     end
+	
+     def post account_id, con_id
+	account =  get_account account_id 
+	contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
+	@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
+	@input['action'] =  :buy if @input["action"] == 'close'
+	@input.total_quantity =  @input.total_quantity.to_i.abs
+	account.place_order order: IB::Order.new(@input), contract:contract
+	redirect Index
+     end
+  end
 
  class Style < R '/styles\.css'
    STYLE = File.read(__FILE__).gsub(/.*__END__/m, '')
