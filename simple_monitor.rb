@@ -435,7 +435,7 @@ module Ibo::Views
          if pp.realized_pnl.to_i.zero?
            td.number  ActiveSupport::NumberHelper.number_to_delimited(
 						 ActiveSupport::NumberHelper.number_to_rounded(  pp.unrealized_pnl, precision:0 ))
-         elsiif pp.realized_pnl.present?
+         elsif pp.realized_pnl.present?
            td.number "( realized ) #{ ActiveSupport::NumberHelper.number_to_delimited( pp.realized_pnl )}"
          end
      end
