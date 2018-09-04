@@ -96,49 +96,50 @@ module Ibo::Controllers
   end
 
   class ContractX # < R '/contract/(\d+)/select'
-    def post account_id
-      # if symbol is specified, search for the contract, otherwise use predefined contract
-        @account = get_account account_id 
-	@contract = if @input['symbol'].empty?
-	               @account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
-		    else
-			#puts @input.inspect
-			@input[:right] = @input['right'][0].upcase if @input['sec_type']=='option'
-			@input[:sec_type] = @input['sec_type'].to_sym
-			IB::Contract.build @input.reject{|x| ['predefined_contract','right','sec_type'].include?(x) }
-		    end
-       @contract.verify!
-       @message = if @contract.nil? || @contract.con_id.to_i.zero?  
-                     @contract ||= IB::Stock.new
-		     "Not a valid contract, details in Log" 
-		  else
-         	     ""
-                  end
-      @account.contracts.update_or_create( @contract  ) unless @contract.con_id.to_i.zero?
-      render  :contract_mask
-    end
-  end
+		def post account_id
+#			puts "Input #{input.inspect}"
+			# if symbol is specified, search for the contract, otherwise use predefined contract
+			@account = get_account account_id 
+			@contract = if input.include?('predefined_contract')
+										@account.contracts.detect{|x| x.con_id == input['predefined_contract'].to_i }
+									else
+#										puts input.inspect
+										@input[:right] = @input['right'][0].upcase if input['sec_type']=='option'
+										@input[:sec_type] = @input['sec_type'].to_sym
+										IB::Contract.build @input #.reject{|x| ['right','sec_type'].include?(x) }
+									end
+			puts @contract.to_human
+			@contract.verify!
+			@message = if @contract.nil? || @contract.con_id.to_i.zero?  
+									 @contract ||= IB::Stock.new
+									 "Not a valid contract, details in Log" 
+								 else
+									 ""
+								 end
+		#	@account.contracts.update_or_create( @contract  ) unless @contract.con_id.to_i.zero?
+			render  :contract_mask
+		end
+	end
 
-  class OrderXN 
-    def get account_id, local_id
-	account = get_account account_id 
-	order = account.orders.detect{|x| x.local_id == local_id.to_i }
-	IB::Gateway.current.cancel_order order.local_id if order.is_a? IB::Order
-	sleep 1 
+	class OrderXN 
+		def get account_id, local_id
+			account = get_account account_id 
+			order = account.orders.detect{|x| x.local_id == local_id.to_i }
+			IB::Gateway.current.cancel_order order.local_id if order.is_a? IB::Order
+			sleep 1 
 
-	redirect Index
-     end
-	
-     def post account_id, con_id
-	account =  get_account account_id 
-	contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
-	@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
-	@input['action'] =  :buy if @input["action"] == 'close'
-	@input.total_quantity =  @input.total_quantity.to_i.abs
-	account.place_order order: IB::Order.new(@input), contract:contract
-	redirect Index
-     end
-  end
+			redirect Index
+		end
+
+		def post account_id, con_id
+			account =  get_account account_id 
+			contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
+			@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
+			@input.total_quantity =  @input.total_quantity.to_i.abs
+			account.place_order order: IB::Order.new(@input), contract:contract
+			redirect Index
+		end
+	end
 
  class Style < R '/styles\.css'
    STYLE = File.read(__FILE__).gsub(/.*__END__/m, '')
@@ -154,7 +155,7 @@ module Ibo::Views
 	def layout
 		html do
 			head do
-				title { "IB-Camping-Simple-Trading-Desk" }
+				title { "IB Simple-Monitor & Trading-Desk" }
 				link :rel => 'stylesheet', :type => 'text/css', :href => '/styles.css', :media => 'screen'
 			end
 			show_index
@@ -208,7 +209,7 @@ module Ibo::Views
 			end
 			if @account.present? && @account.portfolio_values.present?
 				tr.exited do
-					td( colspan:2){ "Portfolio Positions" }
+					td( colspan:3){ "Portfolio Positions" }
 					td.number "Size"
 					td.number "Price (Entry)"
 					td.number "Price (Market)"
@@ -256,8 +257,13 @@ module Ibo::Views
 						td @message
 					else
 						td { input :type => 'submit', :class => 'submit', :value => 'Use'  }
-					end
-				end
+					end # if
+				end # tr
+			end  # table
+		end # form
+
+		form action: R(ContractX, @account.account), method: 'post' do
+			table do
 				input_row['symbol', '(if empty predefined Contract will be used)']
 				input_row['currency', @contract.con_id.present? ? " con-id : #{@contract.con_id}" : '' ]
 				input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : '']
@@ -288,9 +294,9 @@ module Ibo::Views
 	end # contract_mask
 
   def _order_mask
-		position_exists = -> do 
-			position = @account.contracts.find{|x| x.con_id == @contract.con_id}
-			position.present? ? position.portfolio_values.first : nil 
+		negative_position = -> do   # returns the negative position-size (if present) or ""
+			the_contract_in_account = @account.contracts.find{|x| x.con_id == @contract.con_id}
+			the_contract_in_account.present? ? -the_contract_in_account.portfolio_values.first.position.to_i : '' 
 		end
 
     form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
@@ -301,17 +307,17 @@ module Ibo::Views
 					td @contract.symbol  # {"#{@contract.to_human }" }
 					td( colspan: 4, align: 'left' ) { 'Order-Mask' }
 				end
-				tr do
-					td
-					td { [ input( type: :radio, name: 'action' , value: 'buy', checked:'checked')  , '  Buy'].join }
-					td { [ input( type: :radio, name: 'action' , value: 'sell')  , '  Sell'].join }
-					td { [ input( type: :radio, name: 'action' , value: 'close', checked:'checked')  , '  Close'].join } if  position_exists[]
-					td { [ input( type: :checkbox, value: 'true' , name: 'what_if')  , 'WhatIf'].join }
-					td { [ input( type: :checkbox, value: 'true' , name: 'transmit', checked:'checked')  , 'Transmit'].join }
-				end
+#				tr do
+#					td
+#					td { [ input( type: :radio, name: 'action' , value: 'buy', checked:'checked')  , '  Buy'].join }
+#					td { [ input( type: :radio, name: 'action' , value: 'sell')  , '  Sell'].join }
+#					td { [ input( type: :radio, name: 'action' , value: 'close', checked:'checked')  , '  Close'].join } if  position_exists[]
+#					td { [ input( type: :checkbox, value: 'true' , name: 'what_if')  , 'WhatIf'].join }
+#					td { [ input( type: :checkbox, value: 'true' , name: 'transmit', checked:'checked')  , 'Transmit'].join }
+#				end
 				tr do
 					td 'Size'
-					td { input type: :text, value: position_exists[].present? ?  -position_exists[].position.to_i : '' , name: 'total_quantity' };
+					td { input type: :text, value: negative_position[] , name: 'total_quantity' };
 					td '(Limit) Price'
 					td { input type: :text, value: '' , name: 'limit_price' };
 					td '(Aux) Price'
@@ -328,28 +334,28 @@ module Ibo::Views
 		end
 	end 
 
-  def show_index
-    form action: R(SelectAccount), method: 'post' do
-      table  do
-	tr do
-	  td "TWS-Host: #{IB::Gateway.current.get_host}"
-	  td "Status: #{status = IB::Gateway.tws.connected? ? 'Connected' : 'Disconnected'}"
-	  if status =='Connected'
-	    td 'Depot:'
-	    td { select( :name => 'account', :size => 1){
-			IB::Gateway.current.for_active_accounts{|x| option( :value => x.account){ account_name(x, allow_blank: false) } } } }
-	    td { input :type => 'submit', :class => 'submit', :value => 'Select Account' }
-	    td { a 'Contracts', href: R(StatusX, :contracts) }
+	def show_index
+		form action: R(SelectAccount), method: 'post' do
+			table  do
+				tr do
+					td "TWS-Host: #{IB::Gateway.current.get_host}"
+					td "Status: #{status = IB::Gateway.tws.connected? ? 'Connected' : 'Disconnected'}"
+					if status =='Connected'
+						td 'Depot:'
+						td { select( :name => 'account', :size => 1){
+							IB::Gateway.current.for_active_accounts{|x| option( :value => x.account){ account_name(x, allow_blank: false) } } } }
+						td { input :type => 'submit', :class => 'submit', :value => 'Select Account' }
+						td { a 'Contracts', href: R(StatusX, :contracts) }
 
-	    td { a 'Refresh', href: R(StatusX, :refresh) }
-	    td { a 'Disconnect', href: R(StatusX, :disconnect) }
-	  else
-	    td { a 'Connect', href: R(StatusX, :connect) } 
-	  end # branch
-	end # tr
-      end # table
-    end # form
-  end # def
+						td { a 'Refresh', href: R(StatusX, :refresh) }
+						td { a 'Disconnect', href: R(StatusX, :disconnect) }
+					else
+						td { a 'Connect', href: R(StatusX, :connect) } 
+					end # branch
+				end # tr
+			end # table
+		end # form
+	end # def
 
 ## partials
   def _details( d )
@@ -424,10 +430,12 @@ module Ibo::Views
          td.number pp.position 
          td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost )
          td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.market_price )
-         td.number  ActiveSupport::NumberHelper.number_to_delimited(ActiveSupport::NumberHelper.number_to_rounded(  pp.market_value, precision:0 ))
+         td.number  ActiveSupport::NumberHelper.number_to_delimited(
+					          ActiveSupport::NumberHelper.number_to_rounded(  pp.market_value, precision:0 ))
          if pp.realized_pnl.to_i.zero?
-           td.number  ActiveSupport::NumberHelper.number_to_delimited(ActiveSupport::NumberHelper.number_to_rounded(  pp.unrealized_pnl, precision:0 ))
-         else
+           td.number  ActiveSupport::NumberHelper.number_to_delimited(
+						 ActiveSupport::NumberHelper.number_to_rounded(  pp.unrealized_pnl, precision:0 ))
+         elsiif pp.realized_pnl.present?
            td.number "( realized ) #{ ActiveSupport::NumberHelper.number_to_delimited( pp.realized_pnl )}"
          end
      end
