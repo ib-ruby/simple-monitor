@@ -426,8 +426,11 @@ puts negative_position[]
 	end 
 
 	def _account_value( av )
-		td(colspan:2){ av.key.to_s + ': ' + 
-								 ActiveSupport::NumberHelper.number_to_currency( av.value, precision:0, unit: av.currency, format: '%n %u' ).to_s }
+		td(colspan:2) do
+			unless av.nil? || av.key.nil?	
+		       	av.key.to_s + ': ' + ActiveSupport::NumberHelper.number_to_currency( av.value, precision:0, unit: av.currency, format: '%n %u' ).to_s 
+			end
+		end
 	end 
 
 	def _portfolio_position(pp)
