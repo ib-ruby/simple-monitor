@@ -100,23 +100,23 @@ module Ibo::Controllers
 #			puts "Input #{input.inspect}"
 			# if symbol is specified, search for the contract, otherwise use predefined contract
 			@account = get_account account_id 
-			@contract = if input.include?('predefined_contract')
+			c = if input.include?('predefined_contract')
 										@account.contracts.detect{|x| x.con_id == input['predefined_contract'].to_i }
 									else
-#										puts input.inspect
 										@input[:right] = @input['right'][0].upcase if input['sec_type']=='option'
 										@input[:sec_type] = @input['sec_type'].to_sym
 										IB::Contract.build @input #.reject{|x| ['right','sec_type'].include?(x) }
 									end
-			#puts @contract.inspect
-			@contract.verify!
-			@message = if @contract.nil? || @contract.con_id.to_i.zero?  
+			c.exchange = nil unless c.con_id.zero?  # walkaround to enable verifying by con_id
+			count=  c.verify{|y| @contract =  y}
+			@message = if count.zero?  
 									 @contract ||= IB::Stock.new
 									 "Not a valid contract, details in Log" 
 								 else
 									 ""
 								 end
-		#	@account.contracts.update_or_create( @contract  ) unless @contract.con_id.to_i.zero?
+			# include contract in contracts-collection of the account
+			@account.contracts.update_or_create( @contract  ) unless @contract.con_id.to_i.zero?
 			render  :contract_mask
 		end
 	end
@@ -136,6 +136,7 @@ module Ibo::Controllers
 			contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
 			@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
 			@input.total_quantity =  @input.total_quantity.to_i.abs
+			
 			account.place_order order: IB::Order.new(@input), contract:contract
 			redirect Index
 		end
@@ -170,12 +171,12 @@ module Ibo::Views
 		table do
 			tr.exited do
 				td { "Contracts" }
-				@accounts.each{|a| td account_name(a) } if @accounts.present?
+				@accounts.each{|a| td.number account_name(a) } if @accounts.present?
 			end
 			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
 				tr do
 					td contract.to_human[1..-2] 
-					@accounts.each{|a| td size[a,contract] } if @accounts.present?
+					@accounts.each{|a| td.number size[a,contract].to_i } if @accounts.present?
 				end 
 			end
 			tr.exited do
@@ -297,7 +298,8 @@ module Ibo::Views
   def _order_mask
 		negative_position = -> do   # returns the negative position-size (if present) or ""
 			the_contract_in_account = @account.contracts.find{|x| x.con_id == @contract.con_id}
-			the_contract_in_account.present? ? -the_contract_in_account.portfolio_values.first.position.to_i : '' 
+			# omit if a new position shall be entered
+			the_contract_in_account.present? && the_contract_in_account.portfolio_values.present? ? -the_contract_in_account.portfolio_values.first.position.to_i : '' 
 		end
 
 		the_price = -> { @contract.misc.last }  # holds the market price form the previous query
