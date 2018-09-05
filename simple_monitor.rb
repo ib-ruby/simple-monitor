@@ -297,12 +297,11 @@ module Ibo::Views
 
   def _order_mask
 		negative_position = -> do   # returns the negative position-size (if present) or ""
-			the_contract_in_account = @account.contracts.find{|x| x.con_id == @contract.con_id}
-			# omit if a new position shall be entered
-			the_contract_in_account.present? && the_contract_in_account.portfolio_values.present? ? -the_contract_in_account.portfolio_values.first.position.to_i : '' 
+			the_p_position = @account.portfolio_values.find{|p| p.contract.con_id == @contract.con_id} 
+			the_p_position.present? ? -the_p_position.position.to_i  : ""
 		end
 
-		the_price = -> { @contract.misc.last }  # holds the market price form the previous query
+		the_price = -> { @contract.misc.last }  # holds the market price from the previous query
 
     form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
 
@@ -320,6 +319,8 @@ module Ibo::Views
 #					td { [ input( type: :checkbox, value: 'true' , name: 'what_if')  , 'WhatIf'].join }
 #					td { [ input( type: :checkbox, value: 'true' , name: 'transmit', checked:'checked')  , 'Transmit'].join }
 #				end
+puts "Negative Position"
+puts negative_position[]
 				tr do
 					td 'Size'
 					td { input type: :text, value: negative_position[] , name: 'total_quantity' };
