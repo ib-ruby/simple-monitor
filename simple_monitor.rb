@@ -209,7 +209,7 @@ module Ibo::Views
 			end
 			if @account.present? && @account.portfolio_values.present?
 				tr.exited do
-					td( colspan:3){ "Portfolio Positions" }
+					td( colspan:2){ "Portfolio Positions" }
 					td.number "Size"
 					td.number "Price (Entry)"
 					td.number "Price (Market)"
@@ -263,10 +263,11 @@ module Ibo::Views
 		end # form
 
 		form action: R(ContractX, @account.account), method: 'post' do
+
 			table do
-				input_row['symbol', '(if empty predefined Contract will be used)']
-				input_row['currency', @contract.con_id.present? ? " con-id : #{@contract.con_id}" : '' ]
 				input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : '']
+				input_row['symbol', @contract.contract_detail.present? ? " market price : #{@contract.market_price}  (delayed)" : '' ]
+				input_row['currency', @contract.contract_detail.present? ? " con-id : #{@contract.con_id}" : '' ]
 				input_row['expiry', @contract.contract_detail.present? ? @contract.contract_detail.industry : '']
 				input_row['right', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
 				input_row['strike', @contract.strike.to_i > 0 ? @contract.strike : '']
@@ -290,7 +291,7 @@ module Ibo::Views
 				end  # tr
 			end	  # table
 		end #form
-		_order_mask if @contract.con_id.present?
+		_order_mask if @contract.contract_detail.present? || @contract.is_a?( IB::Bag )
 	end # contract_mask
 
   def _order_mask
@@ -298,6 +299,8 @@ module Ibo::Views
 			the_contract_in_account = @account.contracts.find{|x| x.con_id == @contract.con_id}
 			the_contract_in_account.present? ? -the_contract_in_account.portfolio_values.first.position.to_i : '' 
 		end
+
+		the_price = -> { @contract.misc.last }
 
     form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
 
@@ -318,8 +321,8 @@ module Ibo::Views
 				tr do
 					td 'Size'
 					td { input type: :text, value: negative_position[] , name: 'total_quantity' };
-					td '(Limit) Price'
-					td { input type: :text, value: '' , name: 'limit_price' };
+					td '(Primary) Price'
+					td { input type: :text, value: the_price[] , name: 'limit_price' };
 					td '(Aux) Price'
 					td { input type: :text, value: '' , name: 'aux_price' };
 				end
@@ -358,89 +361,89 @@ module Ibo::Views
 	end # def
 
 ## partials
-  def _details( d )
-    tr do
-      td d.first
-      d.last.each do |x,y|
-	td.number "#{ActiveSupport::NumberHelper.number_to_delimited(x)} #{y}"
-      end
-    end
-  end
-
-  def _contract(c)
-      tr do
-	td c.sec_type.to_s.upcase
-	td c.symbol
-	td c.currency
-	td c.exchange
-	td.number c.con_id
-      end
-  end
-
-  def _order(o)
-    my_price = -> do
-      if o.limit_price.present? && o.limit_price != 0
-	if o.aux_price.present? && o.aux_price != 0
-	  "@ #{ActiveSupport::NumberHelper.number_to_rounded(o.limit_price)} / #{ActiveSupport::NumberHelper.number_to_rounded(o.aux_price)} "
-	else
-	  "@ " + ActiveSupport::NumberHelper.number_to_rounded(o.limit_price) 
+	def _details( d )
+		tr do
+			td d.first
+			d.last.each do |x,y|
+				td.number "#{ActiveSupport::NumberHelper.number_to_delimited(x)} #{y}"
+			end
+		end
 	end
-      elsif o.aux_price.present? && o.aux_price != 0 
-	"@ " + ActiveSupport::NumberHelper.number_to_rounded(o.aux_price) 
-      else 
-	" "
-      end
-    end
-    character = -> do
-      if o.order_states.any?{|x| x=='Executed'}
-	"Finished "
-      elsif o.order_states.any?{|x| x=='Canceled'}
-	"Canceled "
-      else
-	"Open "
-      end + "Order:"
-    end
-    tr do
-      td o.account
-      td character[]
-      td o.contract.to_human[1..-2] || "no Contract Info saved"
-      td "#{o.side} #{o.quantity}  #{ o.order_type } #{o.tif}"
-      td my_price[]
-      td o.order_states.map{|x| x.status }.join(';')
-      td { a 'cancel' , href: R(OrderXN, o.account, o.local_id ) } if o.local_id >0 
-    end
-  end
 
-  def _account_infos( a )
-    tr do
-      _account_value a.simple_account_data_scan('NetLiquidation').first
+	def _contract(c)
+		tr do
+			td c.sec_type.to_s.upcase
+			td c.symbol
+			td c.currency
+			td c.exchange
+			td.number c.con_id
+		end
+	end
+
+	def _order(o)
+		my_price = -> do
+			if o.limit_price.present? && o.limit_price != 0
+				if o.aux_price.present? && o.aux_price != 0
+					"@ #{ActiveSupport::NumberHelper.number_to_rounded(o.limit_price)} / #{ActiveSupport::NumberHelper.number_to_rounded(o.aux_price)} "
+				else
+					"@ " + ActiveSupport::NumberHelper.number_to_rounded(o.limit_price) 
+				end
+			elsif o.aux_price.present? && o.aux_price != 0 
+				"@ " + ActiveSupport::NumberHelper.number_to_rounded(o.aux_price) 
+			else 
+				" "
+			end
+		end
+		character = -> do
+			if o.order_states.any?{|x| x=='Executed'}
+				"Finished "
+			elsif o.order_states.any?{|x| x=='Canceled'}
+				"Canceled "
+			else
+				"Open "
+			end + "Order:"
+		end
+		tr do
+			td o.account
+			td character[]
+			td o.contract.to_human[1..-2] || "no Contract Info saved"
+			td "#{o.side} #{o.quantity}  #{ o.order_type } #{o.tif}"
+			td my_price[]
+			td o.order_states.map{|x| x.status }.join(';')
+			td { a 'cancel' , href: R(OrderXN, o.account, o.local_id ) } if o.local_id >0 
+		end
+	end
+
+	def _account_infos( a )
+		tr do
+			_account_value a.simple_account_data_scan('NetLiquidation').first
 			_account_value a.simple_account_data_scan('InitMarginReq').first  
-      _account_value a.simple_account_data_scan('TotalCashValue').first
-    end
-  end 
+			_account_value a.simple_account_data_scan('TotalCashValue').first
+		end
+	end 
 
-  def _account_value( av )
-    td(colspan:2){ av.key.to_s + ': ' + 
-     ActiveSupport::NumberHelper.number_to_currency( av.value, precision:0, unit: av.currency, format: '%n %u' ).to_s }
-  end 
+	def _account_value( av )
+		td(colspan:2){ av.key.to_s + ': ' + 
+								 ActiveSupport::NumberHelper.number_to_currency( av.value, precision:0, unit: av.currency, format: '%n %u' ).to_s }
+	end 
 
-   def _portfolio_position(pp)
-     tr do
-         td(colspan:2){ pp.contract.to_human[1..-2] }
-         td.number pp.position 
-         td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost )
-         td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.market_price )
-         td.number  ActiveSupport::NumberHelper.number_to_delimited(
-					          ActiveSupport::NumberHelper.number_to_rounded(  pp.market_value, precision:0 ))
-         if pp.realized_pnl.to_i.zero?
-           td.number  ActiveSupport::NumberHelper.number_to_delimited(
-						 ActiveSupport::NumberHelper.number_to_rounded(  pp.unrealized_pnl, precision:0 ))
-         elsif pp.realized_pnl.present?
-           td.number "( realized ) #{ ActiveSupport::NumberHelper.number_to_delimited( pp.realized_pnl )}"
-         end
-     end
+	def _portfolio_position(pp)
+		tr do
+			td(colspan:2){ pp.contract.to_human[1..-2] }
+			td.number pp.position.to_i 
+			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost )
+			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.market_price )
+			td.number  ActiveSupport::NumberHelper.number_to_delimited(
+				ActiveSupport::NumberHelper.number_to_rounded(  pp.market_value, precision:0 ))
+			if pp.realized_pnl.to_i.zero?
+				td.number  ActiveSupport::NumberHelper.number_to_delimited(
+					ActiveSupport::NumberHelper.number_to_rounded(  pp.unrealized_pnl, precision:0 ))
+			elsif pp.realized_pnl.present?
+				td.number "( realized ) #{ ActiveSupport::NumberHelper.number_to_delimited( pp.realized_pnl )}"
+			end
+		end
 
-  end
+	end
 end # module 
 
 __END__
