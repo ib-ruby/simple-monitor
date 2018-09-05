@@ -108,7 +108,7 @@ module Ibo::Controllers
 										@input[:sec_type] = @input['sec_type'].to_sym
 										IB::Contract.build @input #.reject{|x| ['right','sec_type'].include?(x) }
 									end
-			puts @contract.to_human
+			#puts @contract.inspect
 			@contract.verify!
 			@message = if @contract.nil? || @contract.con_id.to_i.zero?  
 									 @contract ||= IB::Stock.new
@@ -300,7 +300,7 @@ module Ibo::Views
 			the_contract_in_account.present? ? -the_contract_in_account.portfolio_values.first.position.to_i : '' 
 		end
 
-		the_price = -> { @contract.misc.last }
+		the_price = -> { @contract.misc.last }  # holds the market price form the previous query
 
     form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
 
@@ -428,10 +428,11 @@ module Ibo::Views
 	end 
 
 	def _portfolio_position(pp)
+		the_multiplier = ->{ pp.contract.multiplier.zero? ? 1: pp.contract.multiplier }
 		tr do
 			td(colspan:2){ pp.contract.to_human[1..-2] }
 			td.number pp.position.to_i 
-			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost )
+			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost / the_multiplier[] )
 			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.market_price )
 			td.number  ActiveSupport::NumberHelper.number_to_delimited(
 				ActiveSupport::NumberHelper.number_to_rounded(  pp.market_value, precision:0 ))
