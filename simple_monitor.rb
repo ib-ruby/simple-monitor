@@ -165,8 +165,9 @@ module Ibo::Views
 	end
 
 	def show_contracts
-		size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
 		sleep 0.1  # wait for data to populate
+		size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
+		pending_orders = -> { @accounts.present? ? @accounts.map( &:orders ).flatten.compact  : [] }
 
 		table do
 			tr.exited do
@@ -179,23 +180,18 @@ module Ibo::Views
 					@accounts.each{|a| td.number size[a,contract].to_i } if @accounts.present?
 				end 
 			end
-			tr.exited do
-				td( colspan: [@accounts.size+1,7].max ){ 'Pending-Orders' }
-			end
-			@accounts.each do |a|
-				tr do
-					if a.orders.present? 
-						a.orders.each{|x| _order(x)} 
-					else
-						td account_name(a)
-						td( colspan: @accounts.size ){ "No Pending Orders" }
-					end
-				end
+	
+			if pending_orders[].empty?
+				tr.exited { td( colspan: [@accounts.size+1,7].max ){ 'No Pending-Orders' } }
+			else
+				tr.exited { td( colspan: [@accounts.size+1,7].max ){ 'Pending-Orders' } }
+				pending_orders[].each {  |a| tr { _order(a)} }  
 			end
 		end
 	end
 
 	def show_account
+		pending_orders = -> { @account.present? ? @account.orders  : [] }
 		table do
 			if @account.present? && @account.account_values.present? 
 				tr( class:  "lines") do
@@ -221,11 +217,11 @@ module Ibo::Views
 
 				@account.portfolio_values.each{|x| _portfolio_position(x) }
 			end
-			tr.exited do
-				td( colspan:8, align:'center' ) { 'Pending-Orders' }
-			end
-			IB::Gateway.current.for_active_accounts do |account|
-				account.orders.each{|x| _order(x)} if account.orders.present?
+			if pending_orders[].empty?
+				tr.exited { td( colspan: 8, align: 'center'){ 'No Pending-Orders' } }
+			else
+				tr.exited { td( colspan:8, align:'center' ) { 'Pending-Orders' } }
+				pending_orders[].each {  |a| tr { _order(a)} }  
 			end
 		end
 	end
