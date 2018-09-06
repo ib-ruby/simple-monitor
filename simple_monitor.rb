@@ -18,15 +18,14 @@ module Ibo::Helpers
     initialize_gw.active_accounts.detect{|x| x.account == account_id }
   end
   def initialize_gw 
-    if IB::Gateway.current.nil?
+    if IB::Gateway.current.nil?   # only the first time ...
       host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
       gw = IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('simple-monitor.log') ) 
       gw.logger.level=Logger::INFO
-      gw.logger.formatter = proc do |severity, datetime, progname, msg|
-				"#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n"
-      end
-      gw.get_account_data.join
-      gw.update_orders 
+      gw.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
+      th= gw.get_account_data  # get account-data (in Background)
+      gw.update_orders				 # read pending_orders
+			th.join									 # wait until account-gathering finished
     end
     IB::Gateway.current # return_value
   end
