@@ -47,7 +47,7 @@ module Ibo::Controllers
   class StatusX
     def get action
       ib = initialize_gw  # make sure that everything is initialized
-      account_data = -> {ib.get_account_data; ib.update_orders;  }
+      account_data = -> {ib.get_account_data.join; ib.update_orders;  }
       rendered = false
       view_to_render = :show_account 
       case action.split('/').first.to_sym
@@ -59,7 +59,7 @@ module Ibo::Controllers
 			when :refresh
 				account_data[]
 			when :contracts
-				account_data[]
+			#	account_data[]
 				@accounts = ib.active_accounts
 				view_to_render = :show_contracts
 			end
@@ -69,30 +69,31 @@ module Ibo::Controllers
 	end
 
   class SelectAccount # < R '/Status'
-    def init_account_values	
-      account_value = ->(item) do 
-	array = @account.simple_account_data_scan(item).map{|y| [y.value,y.currency] unless y.value.to_i.zero? }.compact 
-	array.sort{ |a,b| b.last == 'BASE' ? 1 :  a.last  <=> b.last } # put base element in front
-      end
-      @account_values= {  'Cash' =>  account_value['TotalCashBalance'],
-                    'FuturesPNL' =>  account_value['PNL'],
-                 'FutureOptions' =>  account_value['FutureOption'],
-                       'Options' =>  account_value['OptionMarket'],
-                        'Stocks' =>  account_value['StockMarket'] }
-    end
-    def get action
-      @account = IB::Gateway.current.active_accounts.detect{|x| x.account == action.split('/').last }
-      init_account_values
-      render :show_account
-    end
+		def init_account_values	
+			account_value = ->(item) do 
+				array = @account.simple_account_data_scan(item).map{|y| [y.value,y.currency] unless y.value.to_i.zero? }.compact 
+				array.sort{ |a,b| b.last == 'BASE' ? 1 :  a.last  <=> b.last } # put base element in front
+			end
+			initialize_gw.get_account_data( @account ).join
+			@account_values= {  'Cash' =>  account_value['TotalCashBalance'],
+											 'FuturesPNL' =>  account_value['PNL'],
+											 'FutureOptions' =>  account_value['FutureOption'],
+											 'Options' =>  account_value['OptionMarket'],
+											 'Stocks' =>  account_value['StockMarket'] }
+		end
+		def get action
+			@account = IB::Gateway.current.active_accounts.detect{|x| x.account == action.split('/').last }
+			init_account_values
+			render :show_account
+		end
 
-    def post
-      @account = initialize_gw.active_accounts.detect{|x| x.account == @input['account']}
-      @contract = IB::Stock.new
-      init_account_values
-      render :contract_mask
-    end
-  end
+		def post
+			@account = initialize_gw.active_accounts.detect{|x| x.account == @input['account']}
+			@contract = IB::Stock.new
+			init_account_values
+			render :contract_mask
+		end
+	end
 
   class ContractX # < R '/contract/(\d+)/select'
 		def post account_id
