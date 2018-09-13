@@ -6,26 +6,26 @@ require 'yaml'
 Camping.goes :Ibo
 
 module Ibo::Helpers
-  def account_name account , allow_blank: false
-    the_name = if File.exists?( 'tws_alias.yml') 
-		 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.alias
-	       else 
-		 account.alias  # alias is set to account-number if no alias is given
-	       end
-    allow_blank && ( the_name == account.account)  ? "" :	the_name.presence || account.alias
-  end
+	def account_name account, allow_blank: false
+		the_name = if File.exists?( 'tws_alias.yml') 
+								 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.alias
+							 else 
+								 account.alias  # alias is set to account-number if no alias is given
+							 end
+		allow_blank && ( the_name == account.account ) ? "" :	the_name.presence || account.alias # return_value
+	end
   def get_account account_id  # returns an account-object
     initialize_gw.active_accounts.detect{|x| x.account == account_id }
   end
   def initialize_gw 
     if IB::Gateway.current.nil?   # only the first time ...
       host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
-      gw = IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('simple-monitor.log') ) 
-      gw.logger.level=Logger::INFO
+			# client_id 0 gets any open order
+      gw = IB::Gateway.new( host: host, client_id: 0, logger: Logger.new('simple-monitor.log') ) 
+      gw.logger.level=Logger::DEBUG
       gw.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
-      th= gw.get_account_data  # get account-data (in Background)
+      gw.get_account_data 
       gw.update_orders				 # read pending_orders
-			th.join									 # wait until account-gathering finished
     end
     IB::Gateway.current # return_value
   end
@@ -47,17 +47,20 @@ module Ibo::Controllers
   class StatusX
     def get action
       ib = initialize_gw  # make sure that everything is initialized
-      account_data = -> {ib.get_account_data.join; ib.update_orders;  }
       rendered = false
       view_to_render = :show_account 
       case action.split('/').first.to_sym
 			when :disconnect
 				ib.disconnect if ib.tws.present?
+				IB::Gateway.current=nil
 			when :connect
-				ib.connect
-				account_data[]
+				IB::Gateway.current=nil
+				ib = initialize_gw  # make sure that everything is initialized
+				ib.update_orders
 			when :refresh
-				account_data[]
+				ib.for_active_accounts{|a| a.update_attribute :last_updated, nil }
+				ib.get_account_data
+				ib.update_orders
 			when :contracts
 			#	account_data[]
 				@accounts = ib.active_accounts
@@ -71,34 +74,36 @@ module Ibo::Controllers
   class SelectAccount # < R '/Status'
 		def init_account_values	
 			account_value = ->(item) do 
-				array = @account.simple_account_data_scan(item).map{|y| [y.value,y.currency] unless y.value.to_i.zero? }.compact 
-				array.sort{ |a,b| b.last == 'BASE' ? 1 :  a.last  <=> b.last } # put base element in front
+				initialize_gw.get_account_data( @account )
+				@account.simple_account_data_scan(item)
+				.map{|y| [y.value,y.currency] unless y.value.to_i.zero? }
+				.compact 
+				.sort{ |a,b| b.last == 'BASE' ? 1 :  a.last  <=> b.last } # put base element in front
 			end
-			initialize_gw.get_account_data( @account ).join
-			@account_values= {  'Cash' =>  account_value['TotalCashBalance'],
-											 'FuturesPNL' =>  account_value['PNL'],
-											 'FutureOptions' =>  account_value['FutureOption'],
-											 'Options' =>  account_value['OptionMarket'],
-											 'Stocks' =>  account_value['StockMarket'] }
+			{ 'Cash' =>  account_value['TotalCashBalance'],
+				'FuturesPNL' =>  account_value['PNL'],
+				'FutureOptions' =>  account_value['FutureOption'],
+				'Options' =>  account_value['OptionMarket'],
+				'Stocks' =>  account_value['StockMarket'] }  # return_value
 		end
 		def get action
-			@account = IB::Gateway.current.active_accounts.detect{|x| x.account == action.split('/').last }
-			init_account_values
+			@account = get_account action.split('/').last 
+			@account_values = init_account_values
 			render :show_account
 		end
 
 		def post
-			@account = initialize_gw.active_accounts.detect{|x| x.account == @input['account']}
+			@account = get_account  @input['account']
 			@contract = IB::Stock.new
-			init_account_values
+			@account_values = init_account_values
 			render :contract_mask
 		end
 	end
 
   class ContractX # < R '/contract/(\d+)/select'
 		def post account_id
-#			puts "Input #{input.inspect}"
 			# if symbol is specified, search for the contract, otherwise use predefined contract
+			# The contract itself is initialized after verifying 
 			@account = get_account account_id 
 			c = if input.include?('predefined_contract')
 										@account.contracts.detect{|x| x.con_id == input['predefined_contract'].to_i }
@@ -122,7 +127,7 @@ module Ibo::Controllers
 	end
 
 	class OrderXN 
-		def get account_id, local_id
+		def get account_id, local_id  # use get request to cancel an order
 			account = get_account account_id 
 			order = account.orders.detect{|x| x.local_id == local_id.to_i }
 			IB::Gateway.current.cancel_order order.local_id if order.is_a? IB::Order
@@ -131,7 +136,7 @@ module Ibo::Controllers
 			redirect Index
 		end
 
-		def post account_id, con_id
+		def post account_id, con_id  # use put request to place an order
 			account =  get_account account_id 
 			contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
 			@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
@@ -340,8 +345,8 @@ puts negative_position[]
 		form action: R(SelectAccount), method: 'post' do
 			table  do
 				tr do
-					td "TWS-Host: #{IB::Gateway.current.get_host}"
-					td "Status: #{status = IB::Gateway.tws.connected? ? 'Connected' : 'Disconnected'}"
+					td "TWS-Host: #{IB::Gateway.current ? IB::Gateway.current.get_host : "NC"}"
+					td "Status: #{status = !!IB::Gateway.current ? 'Connected' : 'Disconnected'}"
 					if status =='Connected'
 						td 'Depot:'
 						td { select( :name => 'account', :size => 1){
