@@ -68,7 +68,7 @@ If an ascii-Browser like `elinks` is used, the following output is generated
 
 
 ```
-There is an overview of all accloated Contract-Positions
+In Addition, there is an overview of all allocated Contract-Positions
 ```
  TWS-Host: localhost: 4002 Status: Connected Depot: [_________] [ Select Account ] Contracts Refresh Disconnect
 
