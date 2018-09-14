@@ -22,7 +22,7 @@ module Ibo::Helpers
       host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
 			# client_id 0 gets any open order
       gw = IB::Gateway.new( host: host, client_id: 0, logger: Logger.new('simple-monitor.log') ) 
-      gw.logger.level=Logger::DEBUG
+      gw.logger.level=Logger::WARN
       gw.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
       gw.get_account_data 
       gw.update_orders				 # read pending_orders
@@ -46,24 +46,20 @@ module Ibo::Controllers
 
   class StatusX
     def get action
-      ib = initialize_gw  # make sure that everything is initialized
-      rendered = false
       view_to_render = :show_account 
       case action.split('/').first.to_sym
 			when :disconnect
-				ib.disconnect if ib.tws.present?
+				initialize_gw.disconnect
 				IB::Gateway.current=nil
 			when :connect
-				IB::Gateway.current=nil
-				ib = initialize_gw  # make sure that everything is initialized
-				ib.update_orders
+				initialize_gw  # make sure that everything is initialized (again)
 			when :refresh
-				ib.for_active_accounts{|a| a.update_attribute :last_updated, nil }
+				ib = initialize_gw  
+				ib.for_active_accounts{|a| a.update_attribute :last_updated, nil } # force account-data query
 				ib.get_account_data
 				ib.update_orders
-			when :contracts
-			#	account_data[]
-				@accounts = ib.active_accounts
+			when :contracts  # acount_data are taken from memory
+				@accounts = initialize_gw.active_accounts
 				view_to_render = :show_contracts
 			end
 			render view_to_render
@@ -170,33 +166,26 @@ module Ibo::Views
 	end
 
 	def show_contracts
-		sleep 0.1  # wait for data to populate
 		size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
-		pending_orders = -> { @accounts.present? ? @accounts.map( &:orders ).flatten.compact  : [] }
+		pending_orders = -> { @accounts.present? ? @accounts.map( &:orders ).flatten.compact  : [] }  # any account
 
 		table do
 			tr.exited do
 				td { "Contracts" }
-				@accounts.each{|a| td.number account_name(a) } if @accounts.present?
+				@accounts.each{|a| td.number account_name(a) } 
 			end
 			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
 				tr do
 					td contract.to_human[1..-2] 
-					@accounts.each{|a| td.number size[a,contract].to_i } if @accounts.present?
+					@accounts.each{|a| td.number size[a,contract].to_i } 
 				end 
 			end
-	
-			if pending_orders[].empty?
-				tr.exited { td( colspan: [@accounts.size+1,7].max ){ 'No Pending-Orders' } }
-			else
-				tr.exited { td( colspan: [@accounts.size+1,7].max ){ 'Pending-Orders' } }
-				pending_orders[].each {  |a| tr { _order(a)} }  
-			end
+			_pending_orders( @accounts.size+1 ){ pending_orders[] }
 		end
 	end
 
 	def show_account
-		pending_orders = -> { @account.present? ? @account.orders  : [] }
+		pending_orders = -> { @account.present? ? @account.orders  : [] }  # only for the specified account
 		table do
 			if @account.present? && @account.account_values.present? 
 				tr( class:  "lines") do
@@ -222,12 +211,7 @@ module Ibo::Views
 
 				@account.portfolio_values.each{|x| _portfolio_position(x) }
 			end
-			if pending_orders[].empty?
-				tr.exited { td( colspan: 8, align: 'center'){ 'No Pending-Orders' } }
-			else
-				tr.exited { td( colspan:8, align:'center' ) { 'Pending-Orders' } }
-				pending_orders[].each {  |a| tr { _order(a)} }  
-			end
+			_pending_orders(8){ pending_orders[] }
 		end
 	end
 
@@ -312,16 +296,6 @@ module Ibo::Views
 					td @contract.symbol  # {"#{@contract.to_human }" }
 					td( colspan: 4, align: 'left' ) { 'Order-Mask' }
 				end
-#				tr do
-#					td
-#					td { [ input( type: :radio, name: 'action' , value: 'buy', checked:'checked')  , '  Buy'].join }
-#					td { [ input( type: :radio, name: 'action' , value: 'sell')  , '  Sell'].join }
-#					td { [ input( type: :radio, name: 'action' , value: 'close', checked:'checked')  , '  Close'].join } if  position_exists[]
-#					td { [ input( type: :checkbox, value: 'true' , name: 'what_if')  , 'WhatIf'].join }
-#					td { [ input( type: :checkbox, value: 'true' , name: 'transmit', checked:'checked')  , 'Transmit'].join }
-#				end
-puts "Negative Position"
-puts negative_position[]
 				tr do
 					td 'Size'
 					td { input type: :text, value: negative_position[] , name: 'total_quantity' };
@@ -384,7 +358,17 @@ puts negative_position[]
 		end
 	end
 
-	def _order(o)
+	def _pending_orders( columns ) 
+		pending_orders = yield
+			if pending_orders.empty?
+				tr.exited { td( colspan: columns, align: 'center'){ 'No Pending-Orders' } }
+			else
+				tr.exited { td( colspan: columns, align:'center' ) { 'Pending-Orders' } }
+				pending_orders.each {  |a| tr { _order(a)} }  
+			end
+	end
+
+	def _order( o )
 		my_price = -> do
 			if o.limit_price.present? && o.limit_price != 0
 				if o.aux_price.present? && o.aux_price != 0
