@@ -1,10 +1,13 @@
 # Simple Monitor
-Simple Portfolio-Monitor for FA-Accounts on InteractiveBrokers
+Portfolio-Monitor for FA-Accounts on InteractiveBrokers
 
-The monitor is realized with 430 lines of code using __`IB-Ruby`__ and the camping micro-web-framework. 
+**Base Szenario:** Some trading approach is performed on a remote system. There is at least a reverse-ssh tunnel enabling basic administrative operations. One can establish a remote `tmux`-session, one window is starting the `simple_monitor`, one runs an `elinks`-session displaying the output. 
 
-You can select any detected Account. In addition to basic information, such as the NetLiquidation, the used Margin and available Cash, all portfolio-positions are displayed. A simple form to place an emergency-order (i.e. a "Close-Position"-Feature) is provided, too. Additionaly, new Positions can be established through their basic properties.
+The monitor is realized with 430 lines of code using __`IB-Ruby`__ and the camping micro-web-framework. It generates pure HTML and uses some CSS, too, providing an overview on every browser, including text-based ones, like `elinks`.
 
+You can select all Accounts. Basic information, such as the NetLiquidation, the used Margin and available Cash  are shown.  All Portfolio-Positions  (Contracts) are displayed. A simple form to place an emergency-order (i.e. a "Close-Position"-Feature) is provided, too. New Positions can be established through their basic properties (see below).
+
+#### Getting Started
 Install Ruby 2.5+ (via rvm)
 Initialize with `bundle install` following with `bundle update`
 
@@ -12,7 +15,7 @@ Start a TWS or a Gateway with multible Accounts.
 
 Edit tws-alias.yml  and change the `:host`-Entry to the host running the TWS/Gateway (eg. `localhost:7496`).
 If a connection is made with the Gateway, specify that port, too, eg `localhost:4001`. If no Account-Alias is set in 
-Account-Management, a local Alias can be defined in the yaml-dataset.
+Account-Management,  local Aliases can be defined in the yaml-dataset.
 
 Run the camping-Server 
 ```
@@ -24,7 +27,7 @@ Open a Browser-Window at http://localhost:3333
 enjoy
 
 
-
+#### The Output
 If an ascii-Browser like `elinks` is used, the following output is generated
 
 ```
