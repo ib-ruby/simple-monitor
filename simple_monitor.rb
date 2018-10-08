@@ -6,37 +6,37 @@ require 'yaml'
 Camping.goes :Ibo
 
 module Ibo::Helpers
-   def account_name account, allow_blank: false
-	the_name = if File.exists?( 'tws_alias.yml') 
-			 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.alias
-		 else 
-			 account.alias  # alias is set to account-number if no alias is given
-		 end
-	allow_blank && ( the_name == account.account ) ? "" :	the_name.presence || account.alias # return_value
-  end
-  
-  def get_account account_id  # returns an account-object
-    initialize_gw.active_accounts.detect{|x| x.account == account_id }
-  end
-  
-  def initialize_gw 
-    if IB::Gateway.current.nil?   # only the first time ...
-      host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
-  # client_id 0 gets any open order
-      gw = IB::Gateway.new( host: host, client_id: 0, logger: Logger.new('simple-monitor.log') ) 
-      gw.logger.level=Logger::WARN
-      gw.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
-      gw.get_account_data 
-      gw.update_orders				 # read pending_orders
-    end
-    IB::Gateway.current # return_value
-  end
-   
-  def all_contracts *sort
-    sort = [ :sec_type ] if sort.empty?
-    sort.map!{ |x| x.is_a?(Symbol) ? x : x.to_sym  }
-    initialize_gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
-  end
+	def account_name account, allow_blank: false
+		the_name = if File.exists?( 'tws_alias.yml') 
+								 YAML.load_file('tws_alias.yml')[:user][account.account] rescue account.alias
+							 else 
+								 account.alias  # alias is set to account-number if no alias is given
+							 end
+		allow_blank && ( the_name == account.account ) ? "" :	the_name.presence || account.alias # return_value
+	end
+
+	def get_account account_id  # returns an account-object
+		initialize_gw.active_accounts.detect{|x| x.account == account_id }
+	end
+
+	def initialize_gw 
+		if IB::Gateway.current.nil?   # only the first time ...
+			host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
+			# client_id 0 gets any open order
+			gw = IB::Gateway.new( host: host, client_id: 0, logger: Logger.new('simple-monitor.log') ) 
+			gw.logger.level=Logger::WARN
+			gw.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
+			gw.get_account_data 
+			gw.update_orders				 # read pending_orders
+		end
+		IB::Gateway.current # return_value
+	end
+
+	def all_contracts *sort
+		sort = [ :sec_type ] if sort.empty?
+		sort.map!{ |x| x.is_a?(Symbol) ? x : x.to_sym  }
+		initialize_gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
+	end
 end
 
 module Ibo::Controllers
@@ -44,6 +44,9 @@ module Ibo::Controllers
     def get
       initialize_gw
       render :show_account
+		rescue IB::TransmissionError  => e
+			@the_error = e
+			render :show_error 
     end
   end
 
@@ -168,8 +171,8 @@ module Ibo::Views
 	end
 
 	def show_contracts
-		size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
-		pending_orders = -> { @accounts.present? ? @accounts.map( &:orders ).flatten.compact  : [] }  # any account
+		size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position.to_i : 0 }
+		pending_orders = -> {  @accounts.map( &:orders ).flatten.compact  if  @accounts.present? }  # any account
 
 		table do
 			tr.exited do
@@ -179,7 +182,7 @@ module Ibo::Views
 			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
 				tr do
 					td contract.to_human[1..-2] 
-					@accounts.each{|a| td.number size[a,contract].to_i } 
+					@accounts.each{|a| td.number size[a,contract] } 
 				end 
 			end
 			_pending_orders( @accounts.size+1 ){ pending_orders[] }
@@ -187,7 +190,7 @@ module Ibo::Views
 	end
 
 	def show_account
-		pending_orders = -> { @account.present? ? @account.orders  : [] }  # only for the specified account
+		pending_orders = -> {  @account.orders  if  @account.present? }  # only for the specified account
 		table do
 			if @account.present? && @account.account_values.present? 
 				tr( class:  "lines") do
@@ -219,7 +222,7 @@ module Ibo::Views
 
 	def contract_mask
 		input_row = ->( field , comment='' ) do
-			tr { td( field.capitalize); td { input type: :text, value: @contract[field] , name: field }; td comment }
+			tr { td( field.capitalize ); td { input type: :text, value: @contract[field] , name: field }; td comment }
 		end
 		show_account
 		form action: R(ContractX, @account.account), method: 'post' do
@@ -256,8 +259,8 @@ module Ibo::Views
 				input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : '']
 				input_row['symbol', @contract.contract_detail.present? ? " market price : #{@contract.market_price}  (delayed)" : '' ]
 				input_row['currency', @contract.contract_detail.present? ? " con-id : #{@contract.con_id}" : '' ]
-				input_row['expiry', @contract.contract_detail.present? ? @contract.contract_detail.industry : '']
-				input_row['right', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
+				input_row['expiry', @contract.contract_detail.present? ? " expiry: #{@contract.last_trading_day}" : '']
+				input_row['right',  @contract.is_a?(IB::Option) ? @contract.right : '']
 				input_row['strike', @contract.strike.to_i > 0 ? @contract.strike : '']
 				input_row['multiplier', @contract.multiplier.to_i >0  ? @contract.multiplier : '']
 
@@ -287,7 +290,7 @@ module Ibo::Views
 		the_p_position = @account.portfolio_values.find{|p| p.contract.con_id == @contract.con_id} 
 		the_p_position.present? ? -the_p_position.position.to_i  : ""
 	end
-	the_price = -> { @contract.misc.last }  # holds the market price from the previous query
+	the_price = -> { @contract.misc }  # holds the market price from the previous query
 
         form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
 
@@ -339,6 +342,10 @@ module Ibo::Views
 		end # form
 	end # def
 
+	def show_error
+
+	end
+
 ## partials
 	def _details( d )
 		tr do
@@ -360,7 +367,7 @@ module Ibo::Views
 	end
 
 	def _pending_orders( columns ) 
-		pending_orders = yield
+		pending_orders = *yield 
 			if pending_orders.empty?
 				tr.exited { td( colspan: columns, align: 'center'){ 'No Pending-Orders' } }
 			else
@@ -426,8 +433,9 @@ module Ibo::Views
 			td.number pp.position.to_i 
 			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost / the_multiplier[] )
 			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.market_price )
-			td.number  ActiveSupport::NumberHelper.number_to_delimited(
-				ActiveSupport::NumberHelper.number_to_rounded(  pp.market_value, precision:0 ))
+			td.number "%15.2f " % pp.market_value				
+	#		ActiveSupport::NumberHelper.number_to_delimited(
+#				ActiveSupport::NumberHelper.number_to_rounded(  pp.market_value, precision:0 a
 			if pp.realized_pnl.to_i.zero?
 				td.number  ActiveSupport::NumberHelper.number_to_delimited(
 					ActiveSupport::NumberHelper.number_to_rounded(  pp.unrealized_pnl, precision:0 ))
