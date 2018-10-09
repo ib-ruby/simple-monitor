@@ -42,7 +42,8 @@ end
 module Ibo::Controllers
   class Index < R '/'
     def get
-      initialize_gw
+      g = initialize_gw
+      @account =  g.active_accounts.first if g.active_accounts.size ==1 	# if a user-account is accessed
       render :show_account
 		rescue IB::TransmissionError  => e
 			@the_error = e
