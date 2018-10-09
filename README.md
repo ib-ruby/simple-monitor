@@ -5,7 +5,7 @@ Portfolio-Monitor (not only) for FA-Accounts on InteractiveBrokers
 
 The monitor is realized with 430 lines of code using __`IB-Ruby`__ and the camping micro-web-framework. It generates pure HTML and uses some CSS, thus providing an overview on every browser, including text-based ones, like `elinks`.
 
-You can select all Accounts. Basic information, such as the NetLiquidation, the used Margin and available Cash  are shown.  All Portfolio-Positions  (Contracts) are displayed. A simple form to place an emergency-order (i.e. a "Close-Position"-Feature) is provided, too. New Positions can be established through their basic properties (see below).
+You can select all Accounts. Basic information, such as *NetLiquidation*, the used *Margin* and *Available Cash*  are shown.  All Portfolio-Positions  (Contracts) are displayed. A *simple form* to place an emergency-order (i.e. a "Close-Position"-Feature) is provided, too. New Positions can be established through their basic properties (see below).
 
 #### Getting Started
 
