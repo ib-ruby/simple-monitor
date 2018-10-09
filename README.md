@@ -22,7 +22,7 @@ You can select all Accounts. Basic information, such as *NetLiquidation*, the us
   If a connection is made with the Gateway, specify that port, too, eg `localhost:4001`. If no Account-Alias is set in 
   Account-Management, local Aliases can be specified in the yaml-dataset.
 
-* Copy the provided elinks-configuration to the home-directory ( `cp elinks.conf ~/.elinks.conf` )
+* Copy the provided elinks-configuration to the home-directory ( `cp elinks.conf ~/.elinks/elinks.conf` )
 
 * Run the provided tmux-startup-script  ( `./start-simple-monitor` )  **or**
 
