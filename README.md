@@ -44,7 +44,7 @@ If an ascii-Browser like `elinks` is used, the following output is generated
 ![Screenshot](simple-monitor_overview.png)
 
 If a User is selected or only one User is present, a detail-page is displayed
-![Screenshot](simple-monitor_overview_detail.png)
+![Screenshot](simple-monitor_detail.png)
 
 
 
