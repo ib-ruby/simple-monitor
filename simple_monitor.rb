@@ -16,7 +16,7 @@ end
 Camping.goes :Ibo
 
 module Ibo::Helpers
-	def account_name account, allow_blank: false
+	def account_name account, allow_blank: false  # returns an Alias (if not given the AccountID)
 		the_name = read_tws_alias{ |s| s[:user][account.account]} ||  account.alias 
 		allow_blank && ( the_name == account.account ) ? "" :	the_name.presence || account.alias # return_value
 	end
@@ -27,7 +27,13 @@ module Ibo::Helpers
 		account # return_value
 	end
 
-	def read_tws_alias key=nil, default=nil
+  def	negative_position account, contract   # returns the negative position-size (if present) or ""
+			the_p_position = account.portfolio_values.find{|p| p.contract.con_id == contract.con_id} 
+			the_p_position.present? ? -the_p_position.position.to_i  : ""
+	end
+
+	def read_tws_alias key=nil, default=nil  # access to yaml-config-file is not cached. Changes
+																					 # take effect immediately after saving the yaml-dataset
 		structure = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml') : nil
 		if block_given? && !!structure
 			yield structure
@@ -36,21 +42,23 @@ module Ibo::Helpers
 		end
 	end
 
-	def whatchlists # returns a hash: { name => object }
+	def whatchlists # returns a hash: { :name => IB::Symbols Class }
 		the_lists = read_tws_alias :watchlist,  [:Currencies]
 		the_lists.map{ |x| [ x.to_s, IB::Symbols.allocate_collection( x )] rescue nil }.compact.to_h  
 	end
 
-	def initialize_gw 
+	def initialize_gw  # returns the gateway-object or creates it and does basic bookkeeping
 		if IB::Gateway.current.nil?   # only the first time ...
 			host, client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] }
 			# client_id 0 gets any open order
-			gw = IB::Gateway.new( host: host, client_id: client_id, logger: Logger.new('simple-monitor.log') ) 
-			gw.logger.level=Logger::WARN
-			gw.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
-			gw.get_account_data 
-			gw.update_orders				 # read pending_orders
+			gw = IB::Gateway.new(  host: host, client_id: client_id, 
+				logger: Logger.new('simple-monitor.log') ,
+				get_account_data: true ) do |g|
+					g.logger.level=Logger::INFO
+					g.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
+				end
 		end
+		IB::Gateway.current.update_orders				 # read pending_orders
 		IB::Gateway.current # return_value
 	end
 
@@ -58,6 +66,11 @@ module Ibo::Helpers
 		sort = [ :sec_type ] if sort.empty?
 		sort.map!{ |x| x.is_a?(Symbol) ? x : x.to_sym  }
 		initialize_gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
+	end
+
+	def contract_size account,contract  # used to assign the alloclated amount to individual accounts
+		v= account.portfolio_values.detect{|x| x.contract == contract }
+		v.present? ? v.position.to_i : 0 
 	end
 end
 
@@ -136,8 +149,21 @@ module Ibo::Controllers
 		@contract = @account.contracts.detect{|x| x.con_id == con_id.to_i }.verify!
 		render  :contract_mask
 	 end
-
  end
+
+ class CloseAllN
+	 def get con_id
+		 tws =  initialize_gw
+		 puts "con_id #{con_id}"
+		 @contract = tws.locate_contract con_id.to_i 
+		 @contract.market_price # put the price into the misc-attribute 
+		 @sizes =  tws.active_accounts.map{ |a| contract_size( a , @contract ) }   # contract_size is a helper method
+		 @accounts = tws.active_accounts
+		render  :close_contracts
+			
+	 end
+ end
+
  class ContractX # < R '/contract/(\d+)/select'
 	 def post account_id
 		 # if symbol is specified, search for the contract, otherwise use predefined contract
@@ -173,23 +199,38 @@ module Ibo::Controllers
 	 end
  end
 
+	class MultiOrderN
+		def post con_id
+			accounts = @input['total_quantity']
+			order_fields =  @input.reject{|x| x=='total_quantity'}   # all other input-fields
+			puts order_fields.inspect
+			accounts.each{|x,y| get_account(x).place_order IB::Order.new(order_fields.merge total_quantity: y)}
+	puts "---"
+			redirect Index
+		end
+	end
  class OrderXN 
 	def get account_id, local_id  # use get request to cancel an order
+		tws =  initialize_gw
 		account = get_account account_id 
-		order = account.orders.detect{|x| x.local_id == local_id.to_i }
-		IB::Gateway.current.cancel_order order.local_id if order.is_a? IB::Order
-		sleep 1 
-		redirect Index
+		puts "selected local_id: #{local_id}"
+		order = account.locate_order local_id: local_id.to_i 
+		if order.is_a? IB::Order
+			tws.cancel_order order 
+			sleep 1 
+		else
+			tws.logger.error{ "Unable to cancel specified Order( local_id: #{local_id} )" }
+		end
+		redirect  R(SelectAccountX, account.account)
 	end
+
 
 	def post account_id, con_id  # use put request to place an order
 		account =  get_account account_id 
 		contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
-		@input['action'] =  @input.total_quantity.to_i > 0  ? 	:buy  : :sell 
-		@input.total_quantity =  @input.total_quantity.to_i.abs
-		
-		account.place_order order: IB::Order.new(@input), contract:contract
-		redirect Index
+		account.place_order	order: IB::Order.new(@input), contract:contract, convert_size: true
+		sleep 1 
+		redirect R(SelectAccountX, account.account)
 	end
  end
 
@@ -216,7 +257,6 @@ module Ibo::Views
 	end
 
 	def show_contracts
-		size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position.to_i : 0 }
 		pending_orders = -> {  @accounts.map( &:orders ).flatten.compact  if  @accounts.present? }  # any account
 
 		table do
@@ -226,13 +266,13 @@ module Ibo::Views
 			end
 			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
 				tr do
-					td contract.to_human[1..-2] 
-					@accounts.each{|a| td.number size[a,contract] } 
+					td{ a  contract.to_human[1..-2], href: R(CloseAllN, contract.con_id) }
+					@accounts.each{|a| td.number contract_size(a,contract) } 
 				end 
 			end
 			_pending_orders( @accounts.size+1 ){ pending_orders[] }
 		end
-	end
+	end   # def
 
 	def show_account
 		pending_orders = -> {  @account.orders  if  @account.present? }  # only for the specified account
@@ -259,10 +299,31 @@ module Ibo::Views
 					td.number "pnl"
 					td { '&#160;' }
 				end
-
 				@account.portfolio_values.each{|x| _portfolio_position(x) }
 			end
 			_pending_orders(8){ pending_orders[] }
+		end
+	end
+
+	def close_contracts
+		show_contracts
+		form action: R(MultiOrderN,  @contract.con_id), method: 'post' do
+			table do
+				#		tr.exited  { td( colspan:3, align:'right' ) { 'Multi Account Order Mask' } }
+				tr.exited do
+					td( colspan:2 ){@contract.to_human[1..-2] }
+					td( colspan:3 , align: :right){ "Emergency Close" }
+				end
+				tr{  td "Account"  ;  @accounts.each{ |a| td(align: :center){ account_name(a) } } }
+				tr do
+					td 'Size'
+					@accounts.each do |a|
+						td { input type: :text, value: negative_position( a, @contract) , name: "total_quantity[#{a.account}]" }  #a.account };
+					end
+				end
+				tr{ td {" --- "} }
+				_order_attributes_and_submit
+			end
 		end
 	end
 
@@ -271,62 +332,38 @@ module Ibo::Views
 			tr { td( field.capitalize ); td { input type: :text, value: @contract[field] , name: field }; td comment }
 		end
 		show_account
-			table do
-				tr.exited do
-					td( colspan:3, align:'center' ) { 'Contract-Mask' }
-				end
-			end
-#		form action: R(ContractX, @account.account), method: 'post' do
-			table do
-				tr do
-#					td "Portfolio Contracts: "
-#					td do 
-#						select( name: 'predefined_contract', size:1 ) do 
-#							@account.contracts.each do |x| 
-#								if @contract.con_id == x.con_id
-#									option( selected: 'selected',value: x.con_id){  x.to_human[1..-2] }
-#								else
-#									option( value: x.con_id){  x.to_human[1..-2] }
-#								end 
-#							end # each
-#						end # select
-#					end #td
-					if @message.present?
-						td @message
-#					else
-#						td { input :type => 'submit', :class => 'submit', :value => 'Use'  }
-					end # if
-				end # tr
-			end
-#		end  #form
 		table do
+			tr.exited do
+				td( colspan:3, align:'center' ) { 'Contract-Mask' }
+			end
+			tr{ td @message if @message.present? }
 			tr { td( colspan: @watchlists.size ){ "Whatchlists"  }}
 			tr do
 				@watchlists.each do | watchlist_name, watchlist_class |
 					td do 
-					form action: R(ContractX, @account.account), method: 'post' do
-						puts "TSW +#{@the_selected_watchlist}"
-						table do
-							tr { td watchlist_name }
-							tr do
-								td do
-									select( name: watchlist_name, size:1 ) do
-										watchlist_class.all.each do |y| 
-											if @the_selected_watchlist.present? && @the_selected_watchlist == y
-												option( selected: 'selected',value: y ){ watchlist_class[y].to_human[ 1..-2 ] } 
-											else
-												option( value: y ){ watchlist_class[y].to_human[ 1..-2 ] } 
-											end
-										end # each
-									end   # select
-								end     # td
-							end        # tr
-							tr{	td { input type: 'submit', class: 'submit',  value:  "Use #{watchlist_name}"  }}
-						end # table
-					end # form
-				end	  # td
-				end   # tr
-			end # each
+						form action: R(ContractX, @account.account), method: 'post' do
+							puts "TSW +#{@the_selected_watchlist}"
+							table do
+								tr { td watchlist_name }
+								tr do
+									td do
+										select( name: watchlist_name, size:1 ) do
+											watchlist_class.all.each do |y| 
+												if @the_selected_watchlist.present? && @the_selected_watchlist == y
+													option( selected: 'selected',value: y ){ watchlist_class[y].to_human[ 1..-2 ] } 
+												else
+													option( value: y ){ watchlist_class[y].to_human[ 1..-2 ] } 
+												end
+											end # each
+										end   # select
+									end     # td
+								end       # tr
+								tr{	td { input type: 'submit', class: 'submit',  value:  "Use #{watchlist_name}"  }}
+							end # table
+						end # form
+					end	  # td
+				end # each
+			end   # tr
 		end  # table
 
 		form action: R(ContractX, @account.account), method: 'post' do
@@ -361,13 +398,8 @@ module Ibo::Views
 		_order_mask if @contract.contract_detail.present? || @contract.is_a?( IB::Bag )
 	end # contract_mask
 
-  def _order_mask
-		negative_position = -> do   # returns the negative position-size (if present) or ""
-			the_p_position = @account.portfolio_values.find{|p| p.contract.con_id == @contract.con_id} 
-			the_p_position.present? ? -the_p_position.position.to_i  : ""
-		end
-		the_price = -> { @contract.misc }  # holds the market price from the previous query
 
+  def _order_mask
 		form action: R(OrderXN, @account.account, @contract.con_id), method: 'post' do
 			table do
 				tr.exited do
@@ -377,34 +409,41 @@ module Ibo::Views
 				end
 				tr do
 					td 'Size'
-					td { input type: :text, value: negative_position[] , name: 'total_quantity' };
-					td '(Primary) Price'
-					td { input type: :text, value: the_price[] , name: 'limit_price' };
-					td '(Aux) Price'
-					td { input type: :text, value: '' , name: 'aux_price' };
+					td { input type: :text, value: negative_position( @account, @contract) , name: 'total_quantity' };
 				end
-				tr do
-					td 'Order Type'
-					td { select( name: "order_type", size:1){ IB::ORDER_TYPES.each{ |a,b| option( value: a){ b } } } }
-					td 'Validity'
-					td { select( name: 'tif', size:1){[ "GTC", "DAY" ].each{|x| option x }} }
-					td { input :type => 'submit', :class => 'submit', :value => 'submit' }
-				end
+				_order_attributes_and_submit
 			end
 		end
 	end 
 
+	def _order_attributes_and_submit
+
+		the_price = -> { @contract.misc }  # holds the market price from the previous query
+		tr do
+			td '(Primary) Price :'
+			td { input type: :text, value: the_price[] , name: 'limit_price' };
+			td( align: :right ){ '(Aux) Price  :' }
+			td { input type: :text, value: '' , name: 'aux_price' };
+		end
+		tr do
+			td 'Order Type :'
+			td { select( name: "order_type", size:1){ IB::ORDER_TYPES.each{ |a,b| option( value: a){ b } } } }
+			td( align: :right ){ 'Validity :' }
+			td { select( name: 'tif', size:1){[ "GTC", "DAY" ].each{|x| option x }} }
+		end
+		tr{ td(colspan:2){""};	td { input :type => 'submit', :class => 'submit', :value => 'submit' } }
+	end
 	def show_index
 			table  do
 				tr do
-					td "TWS:: #{IB::Gateway.current ? IB::Gateway.current.get_host : "NC"}"
-					if  !!IB::Gateway.current 
-#						td "Client_id: #{IB::Gateway.tws.client_id}"
+					if !!( gw=IB::Gateway.current )
+						td "TWS:: #{gw.get_host}"
 						td { a 'OverView',  href: R(StatusX, :contracts) }
 				#		td { a 'Watchlists', href: R(StatusX, :lists) }   # todo 
 						td { a 'Refresh',    href: R(StatusX, :reload) }
 						td { a 'Disconnect', href: R(StatusX, :disconnect) }
 					else
+					  td( colspan: 2) { "TWS:: NC" }
 						td { a 'Connect',    href: R(StatusX, :connect) } 
 					end # branch
 
@@ -413,9 +452,12 @@ module Ibo::Views
 	end # def
 
 	def show_error
-
+ # todo
 	end
 
+	def close_all contract
+
+	end
 ## partials
 	def _details( d )
 		tr do
