@@ -10,44 +10,21 @@ module IB
 			the_position = @accounts.index sa
 			@accounts.size==1 ?  @accounts.first : @accounts.at( the_position+1 >=  @accounts.size ? 1: the_position +1 )  
 		end
+
+		def locate_contract con_id
+			contract=nil
+			active_accounts.detect{|a| contract = a.contracts.detect{|c| c.con_id == con_id.to_i  }}
+			contract
+		end
+
+
 	end
 end
 
 Camping.goes :Ibo
 
 module Ibo::Helpers
-	def account_name account, allow_blank: false  # returns an Alias (if not given the AccountID)
-		the_name = read_tws_alias{ |s| s[:user][account.account]} ||  account.alias 
-		allow_blank && ( the_name == account.account ) ? "" :	the_name.presence || account.alias # return_value
-	end
-
-	def get_account account_id  # returns an account-object
-		account =initialize_gw.active_accounts.detect{|x| x.account == account_id } 
-		yield( initialize_gw.next_account(account) ) if block_given?
-		account # return_value
-	end
-
-  def	negative_position account, contract   # returns the negative position-size (if present) or ""
-			the_p_position = account.portfolio_values.find{|p| p.contract.con_id == contract.con_id} 
-			the_p_position.present? ? -the_p_position.position.to_i  : ""
-	end
-
-	def read_tws_alias key=nil, default=nil  # access to yaml-config-file is not cached. Changes
-																					 # take effect immediately after saving the yaml-dataset
-		structure = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml') : nil
-		if block_given? && !!structure
-			yield structure
-		else
-		  structure[key]  || default
-		end
-	end
-
-	def whatchlists # returns a hash: { :name => IB::Symbols Class }
-		the_lists = read_tws_alias :watchlist,  [:Currencies]
-		the_lists.map{ |x| [ x.to_s, IB::Symbols.allocate_collection( x )] rescue nil }.compact.to_h  
-	end
-
-	def initialize_gw  # returns the gateway-object or creates it and does basic bookkeeping
+	def gw  # returns the gateway-object or creates it and does basic bookkeeping
 		if IB::Gateway.current.nil?   # only the first time ...
 			host, client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] }
 			# client_id 0 gets any open order
@@ -61,11 +38,42 @@ module Ibo::Helpers
 		IB::Gateway.current.update_orders				 # read pending_orders
 		IB::Gateway.current # return_value
 	end
+	def account_name account, allow_blank: false  # returns an Alias (if not given the AccountID)
+		the_name = read_tws_alias{ |s| s[:user][account.account]} ||  account.alias 
+		allow_blank && ( the_name == account.account ) ? "" :	the_name.presence || account.alias # return_value
+	end
+
+	def get_account account_id  # returns an account-object
+		account =gw.active_accounts.detect{|x| x.account == account_id } 
+		yield( gw.next_account(account) ) if block_given?
+		account # return_value
+	end
+
+  def	negative_position account, contract   # returns the negative position-size (if present) or ""
+			the_p_position = account.portfolio_values.find{|p| p.contract.con_id == contract.con_id} 
+			the_p_position.present? ? -the_p_position.position.to_i  : ""
+	end
+
+	def read_tws_alias key=nil, default=nil  # access to yaml-config-file is not cached. Changes
+																					 # take effect immediately after saving the yaml-dataset
+																					 # a block has access to the raw-structure
+		structure = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml') : nil
+		if block_given? && !!structure
+			yield structure
+		else
+		  structure[key]  || default
+		end
+	end
+
+	def whatchlists # returns a hash: { :name => IB::Symbols Class }
+		the_lists = read_tws_alias :watchlist,  [:Currencies]
+		the_lists.map{ |x| [ x.to_s, IB::Symbols.allocate_collection( x )] rescue nil }.compact.to_h  
+	end
 
 	def all_contracts *sort
 		sort = [ :sec_type ] if sort.empty?
 		sort.map!{ |x| x.is_a?(Symbol) ? x : x.to_sym  }
-		initialize_gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
+		gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
 	end
 
 	def contract_size account,contract  # used to assign the alloclated amount to individual accounts
@@ -77,13 +85,12 @@ end
 module Ibo::Controllers
   class Index < R '/'
 		def get
-			g = initialize_gw
 			@watchlists =  whatchlists
-			if g.active_accounts.size ==1 	# if a user-account is accessed
-				@account =  g.active_accounts.first     
+			if gw.active_accounts.size ==1 	# if a user-account is accessed
+				@account =  gw.active_accounts.first     
 				render :show_account
 			else
-				@accounts = g.active_accounts
+				@accounts = gw.active_accounts
 				render  :show_contracts
 			end
 
@@ -96,23 +103,22 @@ module Ibo::Controllers
   class StatusX
     def get action
       view_to_render = :show_contracts # :show_account 
-			ib = initialize_gw  
 			@watchlists =  whatchlists
       case action.split('/').first.to_sym
 			when :disconnect
-				initialize_gw.disconnect
+				gw.disconnect
 				IB::Gateway.current=nil
       view_to_render = :show_account 
 			when :lists
 
 			when :reload , :connect
-				ib.for_active_accounts{|a| a.update_attribute :last_updated, nil } # force account-data query
-				ib.get_account_data
-				ib.update_orders
-				@accounts = ib.active_accounts
+				gw.for_active_accounts{|a| a.update_attribute :last_updated, nil } # force account-data query
+				gw.get_account_data
+				gw.update_orders
+				@accounts = gw.active_accounts
 			when :contracts 
-				ib.update_orders
-				@accounts = ib.active_accounts
+				gw.update_orders
+				@accounts = gw.active_accounts
 			end  # case
 			render view_to_render
 		end		# def
@@ -121,7 +127,7 @@ module Ibo::Controllers
   class SelectAccountX # < R '/Status'
 	def init_account_values	
 		account_value = ->(item) do 
-			initialize_gw.get_account_data( @account )
+			gw.get_account_data( @account )
 			@account.simple_account_data_scan(item)
 			.map{|y| [y.value,y.currency] unless y.value.to_i.zero? }
 			.compact 
@@ -153,12 +159,11 @@ module Ibo::Controllers
 
  class CloseAllN
 	 def get con_id
-		 tws =  initialize_gw
 		 puts "con_id #{con_id}"
-		 @contract = tws.locate_contract con_id.to_i 
+		 @contract = gw.locate_contract con_id.to_i 
 		 @contract.market_price # put the price into the misc-attribute 
-		 @sizes =  tws.active_accounts.map{ |a| contract_size( a , @contract ) }   # contract_size is a helper method
-		 @accounts = tws.active_accounts
+		 @sizes =  gw.active_accounts.map{ |a| contract_size( a , @contract ) }   # contract_size is a helper method
+		 @accounts = gw.active_accounts
 		render  :close_contracts
 			
 	 end
@@ -201,25 +206,25 @@ module Ibo::Controllers
 
 	class MultiOrderN
 		def post con_id
+			contract = gw.locate_contract( con_id ).verify!
 			accounts = @input['total_quantity']
 			order_fields =  @input.reject{|x| x=='total_quantity'}   # all other input-fields
 			puts order_fields.inspect
-			accounts.each{|x,y| get_account(x).place_order IB::Order.new(order_fields.merge total_quantity: y)}
+			accounts.each{|x,y| get_account(x).place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1}
 	puts "---"
 			redirect Index
 		end
 	end
  class OrderXN 
 	def get account_id, local_id  # use get request to cancel an order
-		tws =  initialize_gw
 		account = get_account account_id 
 		puts "selected local_id: #{local_id}"
 		order = account.locate_order local_id: local_id.to_i 
 		if order.is_a? IB::Order
-			tws.cancel_order order 
+			gw.cancel_order order 
 			sleep 1 
 		else
-			tws.logger.error{ "Unable to cancel specified Order( local_id: #{local_id} )" }
+			gw.logger.error{ "Unable to cancel specified Order( local_id: #{local_id} )" }
 		end
 		redirect  R(SelectAccountX, account.account)
 	end
@@ -436,7 +441,7 @@ module Ibo::Views
 	def show_index
 			table  do
 				tr do
-					if !!( gw=IB::Gateway.current )
+					if !!( IB::Gateway.current )
 						td "TWS:: #{gw.get_host}"
 						td { a 'OverView',  href: R(StatusX, :contracts) }
 				#		td { a 'Watchlists', href: R(StatusX, :lists) }   # todo 
