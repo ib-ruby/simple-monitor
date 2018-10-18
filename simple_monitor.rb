@@ -34,8 +34,8 @@ module Ibo::Helpers
 					g.logger.level=Logger::INFO
 					g.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
 				end
+				IB::Gateway.current.update_orders				 # read pending_orders
 		end
-		IB::Gateway.current.update_orders				 # read pending_orders
 		IB::Gateway.current # return_value
 	end
 	def account_name account, allow_blank: false  # returns an Alias (if not given the AccountID)
@@ -50,7 +50,8 @@ module Ibo::Helpers
 	end
 
   def	negative_position account, contract   # returns the negative position-size (if present) or ""
-			the_p_position = account.portfolio_values.find{|p| p.contract.con_id == contract.con_id} 
+			pending_order =  account.orders.detect{|o| o.contract == contract}  #  overread pending orders
+			the_p_position = account.portfolio_values.find{|p| p.contract == contract} unless !!pending_order
 			the_p_position.present? ? -the_p_position.position.to_i  : ""
 	end
 
@@ -212,6 +213,7 @@ module Ibo::Controllers
 			puts order_fields.inspect
 			accounts.each{|x,y| get_account(x).place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1}
 	puts "---"
+			
 			redirect Index
 		end
 	end
@@ -243,6 +245,7 @@ module Ibo::Controllers
    STYLE = File.read(__FILE__).gsub(/.*__END__/m, '')
    def get
      @headers['Content-Type'] = 'text/css; charset=utf-8'
+#		 @headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
      STYLE
    end
  end
@@ -253,7 +256,7 @@ module Ibo::Views
 	def layout
 		html do
 			head do
-				title { "IB Simple-Monitor & Trading-Desk" }
+				title { "IB Simple-Monitor & Emergency Trading-Desk" }
 				link :rel => 'stylesheet', :type => 'text/css', :href => '/styles.css', :media => 'screen'
 			end
 			show_index
