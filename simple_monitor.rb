@@ -66,7 +66,7 @@ module Ibo::Helpers
 		end
 	end
 
-	def whatchlists # returns a hash: { :name => IB::Symbols Class }
+	def watchlists # returns a hash: { :name => IB::Symbols Class }
 		the_lists = read_tws_alias :watchlist,  [:Currencies]
 		the_lists.map{ |x| [ x.to_s, IB::Symbols.allocate_collection( x )] rescue nil }.compact.to_h  
 	end
@@ -86,9 +86,11 @@ end
 module Ibo::Controllers
   class Index < R '/'
 		def get
-			@watchlists =  whatchlists
+			@watchlists =  watchlists
 			if gw.active_accounts.size ==1 	# if a user-account is accessed
 				@account =  gw.active_accounts.first     
+
+				@portfolio_positions = gw.organize_portfolio_positions( @account, *watchlists ) 
 				render :show_account
 			else
 				@accounts = gw.active_accounts
@@ -104,7 +106,7 @@ module Ibo::Controllers
   class StatusX
     def get action
       view_to_render = :show_contracts # :show_account 
-			@watchlists =  whatchlists
+			@watchlists =  watchlists
       case action.split('/').first.to_sym
 			when :disconnect
 				gw.disconnect
@@ -144,14 +146,14 @@ module Ibo::Controllers
 		@account= get_account(account){ |y|   @next_account = y }
 		@contract = IB::Stock.new
 		@account_values = init_account_values
-		@watchlists =  whatchlists
+		@watchlists =  watchlists
 		render :contract_mask
 	end
  end
 
  class CloseContractXN
 	 def get account_id,  con_id
-		@watchlists =  whatchlists
+		@watchlists =  watchlists
 		@account = get_account( account_id ){| y| @next_account = y} 
 		@contract = @account.contracts.detect{|x| x.con_id == con_id.to_i }.verify!
 		render  :contract_mask
@@ -175,7 +177,7 @@ module Ibo::Controllers
 		 # if symbol is specified, search for the contract, otherwise use predefined contract
 		 # The contract itself is initialized after verifying 
 		 @account = get_account( account_id ){| y| @next_account = y} 
-		 @watchlists =  whatchlists
+		 @watchlists =  watchlists
 
 		 c = if  @watchlists.keys.include? input.keys.first
 					 puts "watchlists #{@watchlists}"
@@ -282,7 +284,7 @@ module Ibo::Views
 		end
 	end   # def
 
-	def show_account
+	def show_account    # variables: @account, @portfolio_positions
 		pending_orders = -> {  @account.orders  if  @account.present? }  # only for the specified account
 		table do
 			if @account.present? && @account.account_values.present? 
@@ -307,12 +309,27 @@ module Ibo::Views
 					td.number "pnl"
 					td { '&#160;' }
 				end
-				@account.portfolio_values.each{|x| _portfolio_position(x) }
-			end
-			_pending_orders(8){ pending_orders[] }
-		end
-	end
 
+				gw.organize_portfolio_positions( @account, *watchlists.values ).each do | watchlist, positions |
+					tr.exited do
+						td( colspan:2){ "Category  -->" }
+						td.number( colspan:6){ watchlist.to_s }
+					end
+					tr do
+						positions.each do | contract, list_of_portfolio_values |
+							if list_of_portfolio_values.size == 1
+								_portfolio_position( list_of_portfolio_values.first )
+							else
+								_link_to_close_contract( contract, contract.legs.map(&:con_id).sum.abs, cols: 5 )
+								list_of_portfolio_values.each{|x| _portfolio_position(x) }
+							end  #if
+						end		 # each	
+					end			 # tr	
+				end				 # organize
+			end					# if
+			_pending_orders(8){ pending_orders[] }
+		end						# table
+	end							# def
 	def close_contracts
 		show_contracts
 		form action: R(MultiOrderN,  @contract.con_id), method: 'post' do
@@ -549,7 +566,7 @@ module Ibo::Views
 	def _portfolio_position(pp)
 		the_multiplier = ->{ pp.contract.multiplier.zero? ? 1: pp.contract.multiplier }
 		tr do
-			td(colspan:2){ a  pp.contract.to_human[1..-2], href: R(CloseContractXN  , @account.account, pp.contract.con_id ) }
+			_link_to_close_contract( pp.contract, pp.contract.con_id )
 			td.number pp.position.to_i 
 			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost / the_multiplier[] )
 			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.market_price )
@@ -564,6 +581,10 @@ module Ibo::Views
 			end
 		end
 
+	end
+
+	def _link_to_close_contract( contract, con_id , cols:2)
+			td(colspan:cols){ a  contract.to_human[1..-2], href: R(CloseContractXN  , @account.account, con_id ) }
 	end
 end # module 
 
