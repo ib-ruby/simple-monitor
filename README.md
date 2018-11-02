@@ -3,7 +3,7 @@ Portfolio-Monitor (not only) for FA-Accounts on InteractiveBrokers
 
 **Base Szenario:** Some trading approach is performed on a remote system. There is at least a reverse-ssh tunnel enabling basic administrative operations. One can establish a remote `tmux`-session, one window is starting the `simple_monitor`, one runs an `elinks`-session displaying the output. 
 
-The monitor is realized with 500 lines of code using __`IB-Ruby`__ and the camping micro-web-framework. It generates pure HTML and uses CSS, thus providing an overview on every browser, including text-based ones, like `elinks`. Avoids JavaScript.
+The monitor is realized using __`IB-Ruby`__ and the camping micro-web-framework. It generates pure HTML and uses CSS, thus providing an overview on every browser, including text-based ones, like `elinks`. Avoids JavaScript.
 
 First an overview of any Portfolio-Position in every Account is displayed (only F&F-Accounts).
 You can select all Accounts. Basic information, such as *NetLiquidation*, the used *Margin* and *Available Cash*  are shown.  All Portfolio-Positions  (Contracts) are displayed. 
@@ -46,6 +46,7 @@ If an ascii-Browser like `elinks` is used, the following output is generated
 If a User is selected or only one User is present, a detail-page is displayed
 ![Screenshot](simple-monitor_detail.png)
 
-
+#### Tmuxx Startup Script
+![Screenshot](simple-monitor_tmux.png)
 
 
