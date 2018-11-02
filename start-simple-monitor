@@ -12,16 +12,18 @@ if [ $? -eq 0 ]; then
 fi
 
 $tmux new-session -d -s $SESSION
-$tmux new-window  -t $SESSION:0  -c '~/simple-monitor/'
+$tmux new-window  -t $SESSION:0  -c '~/workspace/simple-monitor/'
 
-$tmux split-window -d -t $SESSION:0 -v
-$tmux select-layout main-horizontal
-#$tmux split-window -d  -p 10 -t $SESSION:0 -h
+$tmux split-window -d -t $SESSION:0 -v -p 25
+#$tmux select-layout main-horizontal
+#$tmux split-window -d  -p 10 -t $SESSION:0 -v
 #
-$tmux send-keys -t 1 'cd ~/simple-monitor' enter C-l
-$tmux send-keys -t 1 'rvm use 2.5' enter C-l
-$tmux send-keys -t 1 'camping simple_monitor.rb -p 3333' enter C-l
-tmux resize-pane -t 1 -U 10  enter
+$tmux send-keys -t 1 'cd ~/workspace/simple-monitor' enter  C-l
+$tmux send-keys -t 1 'rvm use ruby-head' enter  C-l
+$tmux send-keys -t 1 'camping simple_monitor.rb -p 3333 &'  enter C-l
+$tmux send-keys -t 1 'tail -f simple-monitor.log'  enter C-l
+
+#tmux resize-pane -t 1 -U 10  enter
 #
 $tmux send-keys -t 0 'sleep 1' enter 
 $tmux send-keys -t 0 'elinks' enter 

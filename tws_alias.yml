@@ -9,7 +9,7 @@
 :prices: delayed  #  or realtime
 :watchlist:  # enter list of watchlists here (format -> :Capitalized_symbols)
 - :Futures
-- :W1
+  #- :W1
 - :Currencies  
 - :Spreads
 - :BuyAndHold
