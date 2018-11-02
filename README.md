@@ -47,6 +47,6 @@ If a User is selected or only one User is present, a detail-page is displayed
 ![Screenshot](simple-monitor_detail.png)
 
 #### Tmuxx Startup Script
-![Screenshot](simple-monitor_tmux.png)
+![Screenshot](simple-monitor-tmux.png)
 
 
