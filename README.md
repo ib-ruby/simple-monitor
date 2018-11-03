@@ -46,7 +46,10 @@ If an ascii-Browser like `elinks` is used, the following output is generated
 If a User is selected or only one User is present, a detail-page is displayed
 ![Screenshot](simple-monitor_detail.png)
 
-#### Tmuxx Startup Script
+#### Tmux Startup Script
+First edit `./star-_simple-monitor` and check if the provided pathes fit your environment.
+
+This is the expected output
 ![Screenshot](simple-monitor-tmux.png)
 
 
