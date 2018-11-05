@@ -43,12 +43,12 @@ module Ibo::Helpers
 				else
 					gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
 				end
-		c = if con_id.to_s.to_i >0 
-					watchlists.map{ |_,w| w.contracts.detect{|c| c.con_id.to_i == con_id.to_i}}.compact.first
-				else
+		c = if con_id.is_a?(Symbol)
 					ci= watchlists.map{ |_,w| w.send con_id.to_sym  rescue nil }.compact.first
-					ci.con_id = con_id.to_sym
+					ci.con_id = con_id.to_sym 
 					ci
+				else
+					watchlists.map{ |_,w| w.contracts.detect{|_,c| c.con_id.to_i == con_id.to_i}}.compact.first[1]
 				end if c.nil?
 		c  # return_value
 	end
