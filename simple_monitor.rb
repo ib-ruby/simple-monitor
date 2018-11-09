@@ -36,21 +36,13 @@ module Ibo::Helpers
 	end
 
 	def locate_contract con_id, account = nil
-		c= nil
-		# first search 
-		c = if account.present?
-					account.locate_contract( con_id) || account.complex_position( con_id )
-				else
-					gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
-				end
-		c = if con_id.is_a?(Symbol)
-					ci= watchlists.map{ |_,w| w.send con_id.to_sym  rescue nil }.compact.first
-					ci.con_id = con_id.to_sym 
-					ci
-				else
-					watchlists.map{ |_,w| w.contracts.detect{|_,c| c.con_id.to_i == con_id.to_i}}.compact.first[1]
-				end if c.nil?
-		c  # return_value
+		c= if account.present?
+				 account.locate_contract( con_id) || account.complex_position( con_id )
+			 else
+				 gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
+			 end
+		c= 	watchlists.map{|y| y.detect{|c| c.con_id.to_i == con_id.to_i} rescue nil }.compact.first if c.nil?
+		c
 	end
   def	negative_position account, contract   # returns the negative position-size (if present) or ""
 			pending_order =  account.orders.detect{|o| o.contract == contract}  #  overread pending orders
@@ -69,9 +61,9 @@ module Ibo::Helpers
 		end
 	end
 
-	def watchlists # returns a hash: { :name => IB::Symbols Class }
+	def watchlists # returns an array of preallocated watchlists [IB::Symbols.Class, ... ]
 		the_lists = read_tws_alias :watchlist,  [:Currencies]
-		the_lists.map{ |x| [ x.to_s, IB::Symbols.allocate_collection( x )] rescue nil }.compact.to_h  
+		the_lists.map{ |x|  IB::Symbols.allocate_collection( x ) rescue nil }.compact  
 	end
 
 	def all_contracts *sort
@@ -84,6 +76,18 @@ module Ibo::Helpers
 		v= account.portfolio_values.detect{|x| x.contract == contract }
 		v.present? ? v.position.to_i : 0 
 	end
+
+	def initialize_watchlist_and_account account_id
+		@watchlists =  watchlists.map{|w| w.all.send(:size) >0 ?  w : nil }.compact  # omit empty watchlists
+		@account= nil; gw.for_selected_account(account_id){|a| @account = a } 
+		@next_account = gw.next_account(@account) 
+	end
+
+	def read_order_status  # returns the count of detected orderstatus-messages since the first method call
+		@orderstatus ||=0
+		gw.tws.subscribe( :OrderStatus ){ @orderstatus +=1 }  if  @orderstatus.zero?
+		@orderstatus #  returns the orderstatus
+	end
 end
 
 module Ibo::Controllers
@@ -92,13 +96,11 @@ module Ibo::Controllers
 			@watchlists =  watchlists
 			if gw.active_accounts.size ==1 	# if a user-account is accessed
 				@account =  gw.active_accounts.first     
-
 				render :show_account
 			else
 				@accounts = gw.active_accounts
 				render  :show_contracts
 			end
-
 		rescue IB::TransmissionError  => e
 			@the_error = e
 			render :show_error 
@@ -109,6 +111,7 @@ module Ibo::Controllers
     def get action
       view_to_render = :show_contracts # :show_account 
 			@watchlists =  watchlists
+			@accounts = gw.active_accounts
       case action.split('/').first.to_sym
 			when :disconnect
 				gw.disconnect
@@ -120,10 +123,8 @@ module Ibo::Controllers
 				gw.for_active_accounts{|a| a.update_attribute :last_updated, nil } # force account-data query
 				gw.get_account_data
 				gw.update_orders
-				@accounts = gw.active_accounts
 			when :contracts 
 				gw.update_orders
-				@accounts = gw.active_accounts
 			end  # case
 			render view_to_render
 		end		# def
@@ -144,22 +145,18 @@ module Ibo::Controllers
 		'Options' =>  account_value['OptionMarket'],
 		'Stocks' =>  account_value['StockMarket'] }  # return_value
 	end
-	def get account
-		gw.for_selected_account(account){|a| @account = a } 
-		@next_account = gw.next_account(@account) 
+	def get account_id
+		initialize_watchlist_and_account account_id
 		@contract = IB::Stock.new con_id: -2
 		@account_values = init_account_values
-		@watchlists =  watchlists
 		render :contract_mask
 	end
  end
 
  class CloseContractXX
 	 def get account_id,  con_id
-		@watchlists =  watchlists
-		gw.for_selected_account(account_id){|a| @account = a } 
-		@next_account = gw.next_account(@account) 
-		@contract = @account.locate_contract( con_id) || @account.complex_position( con_id )
+		 initialize_watchlist_and_account account_id
+		 @contract = @account.locate_contract( con_id) || @account.complex_position( con_id )
 		render  :contract_mask
 	 end
  end
@@ -171,34 +168,29 @@ module Ibo::Controllers
 		 @sizes =  gw.active_accounts.map{ |a| contract_size( a , @contract ) }   # contract_size is a helper method
 		 @accounts = gw.active_accounts
 		render  :close_contracts
-			
 	 end
  end
 
  class ContractX # < R '/contract/(\d+)/select'
 	 def post account_id
-		 # if symbol is specified, search for the contract, otherwise use predefined contract
-		 # The contract itself is initialized after verifying 
-		 gw.for_selected_account(account_id){|a| @account = a } 
-		 @next_account = gw.next_account(@account) 
-		 @watchlists =  watchlists
-
-		 @contract = if  @watchlists.keys.include? input.keys.first  # Watchlist-entries are not verified
+		 the_watchlist = -> {IB::Symbols.allocate_collection input.keys.first.to_sym }
+		 initialize_watchlist_and_account account_id
+		 # input (a) --> Hash: Watchlist_name => symbol as string
+		 #       (b) --> Hash of qualified contract attributes from formular 
+		 @contract = if  @watchlists.map(&:to_human).include? input.keys.first   
 					 begin
 						 @the_selected_watchlist = Integer input.values.first  # raises ArgumentError if alpanumeric
-						 c= @watchlists[input.keys.first][@the_selected_watchlist]
-						 c.verify!  # if a alphanmumeric key is used, verify the contract
+						 the_contract=the_watchlist[][@the_selected_watchlist]
 					 rescue ArgumentError
-						 c= @watchlists[input.keys.first].send( @the_selected_watchlist = input.values.first.to_sym )
-						 c.con_id = input.values.first.to_sym  # if a symbol is used as key, use this 
+						 the_contract= the_watchlist[].send( @the_selected_watchlist = input.values.first.to_sym )
 					 end
-					 c
 				 else
 					 @input[:right] = @input['right'][0].upcase if input['sec_type']=='option'
 					 @input[:sec_type] = @input['sec_type'].to_sym
-					 c= IB::Contract.build @input #.reject{|x| ['right','sec_type'].include?(x) }
-					 c.verify!
+					 IB::Contract.build @input 
 				 end
+		 @contract.verify!   # ensure the presence of  con_id
+		 gw.for_selected_account(account_id){|a| a.contracts.update_or_create @contract, :con_id } unless @contract.con_id <0
 		 render  :contract_mask
 	 end
  end
@@ -206,11 +198,12 @@ module Ibo::Controllers
 	class MultiOrderN
 		def post con_id
 			contract =  gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
-			accounts = @input['total_quantity']
 			order_fields =  @input.reject{|x| x=='total_quantity'}   # all other input-fields
-			accounts.each{|x,y| gw.for_selected_account(x){|a| a.place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1}}
-			
-			sleep 1
+			count_of_order_state = read_order_status
+			@input['total_quantity'].each do |x,y| 
+				gw.for_selected_account(x){|a| a.place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1}
+			end
+			i=0; loop{ break if read_order_status >= @input['total_quantity'].size + count_of_order_state || i> 30; sleep 0.2; i=i+1 }
 			gw.update_orders
 			redirect Index
 		end
@@ -232,12 +225,13 @@ module Ibo::Controllers
 
 
 	def post account_id, con_id  # (POST Request) used to  to place an order
+		count_of_order_state_messages = read_order_status
 		gw.for_selected_account(account_id) do |account|
 			contract= locate_contract con_id, account
 			gw.logger.info { "Placing Order on #{contract.to_human}" }
 			account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: true
 		end
-		sleep 1 
+		i=0; loop{ break if read_order_status >  count_of_order_state_messages || i> 30; sleep 0.2; i=i+1 }
 		gw.update_orders
 		redirect R(SelectAccountX, account_id)
 	end
@@ -274,11 +268,13 @@ module Ibo::Views
 				td { "Contracts" }
 				@accounts.each{|account| td.number { a account_name(account), href: R(SelectAccountX, account.account) } }
 			end
-			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
-				tr do
-					td{ a  contract.to_human[1..-2], href: R(CloseAllN, contract.con_id) }
-					@accounts.each{|a| td.number contract_size(a,contract) } 
-				end 
+			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | c |
+				if c.con_id.present? && c.con_id > 0 
+					tr do
+						td{  a c.to_human[1..-2], href: R(CloseAllN, c.con_id)  }
+						@accounts.each{|a| td.number contract_size(a,c) } 
+					end 
+				end
 			end
 			_pending_orders( @accounts.size+1 ){ pending_orders[] }
 		end
@@ -358,16 +354,16 @@ module Ibo::Views
 				td( colspan:3, align:'center' ) { 'Contract-Mask' }
 			end
 			tr{ td @message if @message.present? }
-			tr { td( colspan: @watchlists.size ){ "Watchlists"  }}
+			tr { td( colspan: 3 ){ "Watchlists"  }}
 			tr do
-				@watchlists.each do | watchlist_name, watchlist_class |
+				@watchlists[0..2].each.with_index do |  watchlist_class , i|
 					td do 
 						form action: R(ContractX, @account.account), method: 'post' do
 							table do
-								tr { td watchlist_name }
+								tr { td watchlist_class.to_human }
 								tr do
 									td do
-										select( name: watchlist_name, size:1 ) do
+										select( name: watchlist_class.to_human, size:1 ) do
 											watchlist_class.all.each do |y| 
 												if @the_selected_watchlist.present? && @the_selected_watchlist == y
 													option( selected: 'selected',value: y ){ watchlist_class[y].to_human[ 1..-2 ] } 
@@ -378,7 +374,7 @@ module Ibo::Views
 										end   # select
 									end     # td
 								end       # tr
-								tr{	td { input type: 'submit', class: 'submit',  value:  "Use #{watchlist_name}"  }}
+								tr{	td { input type: 'submit', class: 'submit',  value:  "Use #{watchlist_class.to_human}"  }}
 							end # table
 						end # form
 					end	  # td
@@ -387,7 +383,6 @@ module Ibo::Views
 		end  # table
 		if @contract.description.nil? || @contract.con_id.to_s.to_i >= 0
 			form action: R(ContractX, @account.account), method: 'post' do
-				@contract.verify! unless @contract.con_id.is_a?(Symbol) || @contract.con_id.to_i < 0
 				table do
 					input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : @contract.to_human]
 					input_row['symbol',  " market price : #{@contract.market_price}  (delayed)" ]

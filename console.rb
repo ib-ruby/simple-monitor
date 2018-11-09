@@ -1,16 +1,21 @@
 #!/usr/bin/env ruby
-### loads the active-orient environment 
+### loads the ib-ruby environment 
 ### and starts an interactive shell
 ###
-### Parameter: t)ws | g)ateway (or number of port ) Default: Gateway ,
-###							client_id , Default 2000
+### 
+### loads the startup-parameter of simple-monitor
+### and allocates watchlists
+### 
+### It main proposure: Managment of watchlists
+### 
+### The »received«-Hash is enabled and asseccible throught
+### C.received
 require 'bundler/setup'
-require 'yaml'
+require './simple_monitor' 
 
-require 'logger'
-#require File.expand_path(File.dirname(__FILE__) + "/../config/boot")
 
-require 'ib-gateway'
+include Ibo::Helpers
+
 
 class Array
   # enables calling members of an array, which are hashes by name
@@ -31,55 +36,48 @@ class Array
   end
 end # Array
 
+
   puts 
-  puts ">> I B – G A T E W A Y  Interactive Console <<" 
+  puts ">> S I M P L E – M O N I T O R  Interactive Console <<" 
   puts '-'* 45
   puts 
   puts "Namespace is IB ! "
   puts
-  puts '-'* 45
  
   include IB
   require 'irb'
-  client_id = ARGV[1] || 3000
-  specified_port = ARGV[0] || 'Gateway'
-	port =  case specified_port
-					when Integer
-						specified_port  # just use the number
-					when /^[gG]/ 
-						4002
-					when /^[Tt]/
-						7497
-					end
+	d_host, d_client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] } # client_id 0 gets any open order
+  client_id =  d_client_id.zero? ? 900 : d_client_id-1
   ARGV.clear
   logger = Logger.new  STDOUT
   logger.formatter = proc do |level, time, prog, msg|
       "#{time.strftime('%H:%M:%S')} #{msg}\n"
 	end
-			logger.level = Logger::INFO 
-	
-  ## The Block takes instructions which are executed  after initializing all instance-variables
-  ## and prior to the connection-process
-  ## Here we just subscribe to some events  
-	begin
+	logger.level = Logger::INFO 
+
+ begin
 		G =  Gateway.new  get_account_data: true, serial_array: true,
-			client_id: client_id, port: port, logger: logger,
-			watchlists: [:Spreads, :BuyAndHold]
+			client_id: client_id, host: d_host, logger: logger,
+			watchlists: read_tws_alias(:watchlist)
 	rescue IB::TransmissionError => e
 		puts "E: #{e.inspect}"
 	end
-
 	C =  G.tws
   unless  C.received[:OpenOrder].blank?
         puts "------------------------------- OpenOrders ----------------------------------"
     puts C.received[:OpenOrder].to_human.join "\n"
   end
-  puts  "Connection established on Port  #{port}, client_id #{client_id} used"
+  puts  "Connection established on  #{d_host}, client_id #{client_id} used"
   puts
-  puts  "----> G    points to the Gateway-Instance"
-	puts  "----> C    points to the Connection-Instance"
-  puts
-  puts  "some basic Messages are subscribed and accordingly displayed"
+  puts  "----> G + C               point to the Gateway and the Connection -Instance"
+	puts  "----> C.received          holds all received messages"
+	puts  "----> G.active_accounts   points to gatherd account-data"
+  puts	""
+	puts	"Paramters from »read_tws_alias.yml« used"
+  puts  "Simple-Monitor Helper Methods  are included!"
+	puts  ""
+	puts  "Allocated Watchlists:"
+	puts  watchlists.map{|w| w.to_s}.join "\n"
   puts '-'* 45
 
   IRB.start(__FILE__)
