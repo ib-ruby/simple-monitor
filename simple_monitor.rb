@@ -72,7 +72,7 @@ module Ibo::Helpers
 		gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
 	end
 
-	def contract_size account,contract  # used to assign the alloclated amount to individual accounts
+	def contract_size account,contract  # used to assign the allocated amount to individual accounts
 		v= account.portfolio_values.detect{|x| x.contract == contract }
 		v.present? ? v.position.to_i : 0 
 	end
@@ -350,9 +350,6 @@ module Ibo::Views
 		end
 		show_account
 		table do
-			tr.exited do
-				td( colspan:3, align:'center' ) { 'Contract-Mask' }
-			end
 			tr{ td @message if @message.present? }
 			tr { td( colspan: 3 ){ "Watchlists"  }}
 			tr do
@@ -384,6 +381,9 @@ module Ibo::Views
 		if @contract.description.nil? || @contract.con_id.to_s.to_i >= 0
 			form action: R(ContractX, @account.account), method: 'post' do
 				table do
+			tr.exited do
+				td( colspan:3, align:'left' ) { 'Contract-Mask' }
+			end
 					input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : @contract.to_human]
 					input_row['symbol',  " market price : #{@contract.market_price}  (delayed)" ]
 					input_row['currency', @contract.con_id.to_s.to_i >0  ? " con-id : #{@contract.con_id}" : '' ]
@@ -405,6 +405,8 @@ module Ibo::Views
 					end  # tr
 				end	  # table
 			end #form
+		else
+			table{ tr { td @contract.to_human[1..-2] } } 
 		end # if-branch
 		_order_mask if @contract.description.present? || @contract.con_id.to_s.to_i != 0 
 	end # contract_mask
@@ -486,7 +488,7 @@ module Ibo::Views
 			if pending_orders.empty?
 				tr.exited { td( colspan: columns, align: 'center'){ 'No Pending-Orders' } }
 			else
-				tr.exited { td( colspan: columns, align:'center' ) { 'Pending-Orders' } }
+				tr.exited { td( colspan: columns, align:'left' ) { 'Pending-Orders' } }
 				pending_orders.each {  |a| tr { _order(a)} }  
 			end
 	end
@@ -495,8 +497,6 @@ module Ibo::Views
 		form action: R(OrderXX, @account.account, @contract.con_id), method: 'post' do
 			table do
 				tr.exited do
-					td
-					td @contract.to_human 
 					td( colspan: 4, align: 'left' ) { 'Order-Mask' }
 				end
 				tr do
