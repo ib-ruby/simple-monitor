@@ -121,7 +121,7 @@ module Ibo::Controllers
 
 			when :reload , :connect
 				gw.for_active_accounts{|a| a.update_attribute :last_updated, nil } # force account-data query
-				gw.get_account_data
+				gw.get_account_data watchlists: watchlists
 				gw.update_orders
 			when :contracts 
 				gw.update_orders
@@ -133,7 +133,7 @@ module Ibo::Controllers
   class SelectAccountX # < R '/Status'
 	def init_account_values	
 		account_value = ->(item) do 
-			gw.get_account_data( @account )
+			gw.get_account_data( @account, watchlists: watchlists )
 			@account.simple_account_data_scan(item)
 			.map{|y| [y.value,y.currency] unless y.value.to_i.zero? }
 			.compact 
