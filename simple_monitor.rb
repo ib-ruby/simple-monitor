@@ -288,7 +288,7 @@ module Ibo::Views
 					td( colspan: 1) { @account.account }
 					td( colspan: 2) { account_name  @account, allow_blank: true }
 					td.number( colspan: 3){ "Last Update: #{@account.last_updated.strftime("%d.%m. %X")}" } 
-					td.number { a "Next: #{account_name(@next_account)}", href: R(SelectAccountX, @next_account.account)	}
+					td.number { a "Next: #{account_name(@next_account)}", href: R(SelectAccountX, @next_account.account)	if @next_account.present?}
 				end
 				_account_infos(@account)
 				if @account_values.present?
