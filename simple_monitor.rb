@@ -36,18 +36,28 @@ module Ibo::Helpers
 	end
 
 	def locate_contract con_id, account = nil
+		watchlist_entry = -> {watchlists.map{|y| y.detect{|c| c.con_id.to_i == con_id.to_i} rescue nil }.compact.first }
 		c= if account.present?
 				 account.locate_contract( con_id) || account.complex_position( con_id )
 			 else
 				 gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
 			 end
-		c= 	watchlists.map{|y| y.detect{|c| c.con_id.to_i == con_id.to_i} rescue nil }.compact.first if c.nil?
-		c
+		(c.nil? ? watchlist_entry[] : c).verify!
 	end
   def	negative_position account, contract   # returns the negative position-size (if present) or ""
 			pending_order =  account.orders.detect{|o| o.contract == contract}  #  overread pending orders
 			the_p_position = account.portfolio_values.find{|p| p.contract == contract} unless !!pending_order
 			the_p_position.present? ? -the_p_position.position.to_i  : ""
+	end
+
+	def update_next_order_id
+		# the update itself is done in the subscription defined in  in  Gateway#Initialize
+		i,finish = 0, false
+		sub = gw.tws.subscribe(:NextValidID) { finish =  true }
+		gw.send_message :RequestIds
+		loop { sleep 0.1; break if finish || i >1000; i=i+1 }
+		error "Could not get NextValidId" , :reader if i > 1000
+		gw.tws.unsubscribe sub
 	end
 
 	def read_tws_alias key=nil, default=nil  # access to yaml-config-file is not cached. Changes
@@ -200,6 +210,7 @@ module Ibo::Controllers
 			contract =  gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
 			order_fields =  @input.reject{|x| x=='total_quantity'}   # all other input-fields
 			count_of_order_state = read_order_status
+			update_next_order_id
 			@input['total_quantity'].each do |x,y| 
 				gw.for_selected_account(x){|a| a.place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1}
 			end
@@ -228,6 +239,7 @@ module Ibo::Controllers
 		count_of_order_state_messages = read_order_status
 		gw.for_selected_account(account_id) do |account|
 			contract= locate_contract con_id, account
+			update_next_order_id
 			gw.logger.info { "Placing Order on #{contract.to_human}" }
 			account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: true
 		end
@@ -469,9 +481,9 @@ module Ibo::Views
 
 		the_price = -> { @contract.misc }  # holds the market price from the previous query
 		tr do
-			td '(Primary) Price :'
+			td '(Primary/Limit) Price :'
 			td { input type: :text, value: the_price[] , name: 'limit_price' };
-			td( align: :right ){ '(Aux) Price  :' }
+			td( align: :right ){ '(Aux/Stop) Price  :' }
 			td { input type: :text, value: '' , name: 'aux_price' };
 		end
 		tr do
