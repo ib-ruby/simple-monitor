@@ -89,7 +89,9 @@ class RabbitClient
 					watchlist.remove_contract symbol.to_sym
 				when "ping"
 					puts "ping recognized from #{watchlist}"
-					@response_exchange.publish( IB::Gateway.current.advisor.account, routing_key: kind )
+					@response_exchange.publish(IB::Gateway.current.advisor.to_json, routing_key: kind )
+					IB::Gateway.current.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind )
+  }
 				else
 					logger.error{ "Command not recognized: #{kind}" }
 				end		# case
