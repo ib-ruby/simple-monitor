@@ -25,57 +25,75 @@ class RabbitClient
 									vhost: 'test',
 									username: 'topo',
 									password: 'focus',
-									watchlist: :hC,
-										channel: 'hc',
+									channels: [:HC],
 									logger: nil
+		watchlists = channels.map { |w| w.is_a?(Symbols)?  w : IB::Symbols.allocate_collection( w ) }
 		
-		@watchlist = watchlist
-
+		
 		self.logger  ||=  Logger.new(STDOUT)
 		@connection = Bunny.new( host: host, vhost: vhost, username: username, password: password, logger: logger )
 
 		@connection.start
+		channel =  @connection.create_channel
+		@response_exchange = channel.direct("response") 
+		create_queue = -> { c= @connection.create_channel; c.queue('', exclusive: true) }
+		@queues = watchlists.map do |ch|
+	#		channel =  @connection.create_channel
+	#		queue = channel.queue('', exclusive: true)a
+			watchlist_name = ch.name.split(':').last.to_sym
+			x = create_queue[].bind(watchlist_name)
+			logger.debug{ "Found existing Exchange  #{watchlist_name} ... binding!" }
+			[ch, x ]
+		rescue Bunny::NotFound => e
+			logger.warn e.inspect
+			next
+		end.compact
 
-		@channel =  @connection.create_channel
-		@queue = @channel.queue('', exclusive: true)
-		@queue.bind(channel)
+		@queues << [ "common",  create_queue[].bind('common')]
 	  self #  make it chainable
 	end
-
-	def watchlist
-		IB::Symbols.allocate_collection @watchlist
-	end
-
-	def run 
-		@queue.subscribe do |delivery_info, metadata, payload|
-      # puts "Received #{JSON.parse(payload).inspect}"
-			 message = JSON.parse( payload)
-			 kind =  message.to_a.shift.shift
-			 case kind
-			 when "restart"
-				 logger.error { "restart detected but not handled jet" } if message =={ 'restart' => true }
-			 when 'reset_watchlist'
-				 watchlist.purge_collection
-				 logger.debug{ "Collection purged" }
-				 IB::Symbols.allocate_collection @watchlist
-			 when "add_contract"
-				 key, message = message.to_a.shift.pop
-				 contract = if message.key?( 'Spread')
-											IB::Spread.build_from_json(message)
-										else
-											IB::Contract.build_from_json(message)
-										end
-				 watchlist.add_contract key.to_sym, contract
-				 logger.debug{ "added  #{key}: #{contract.to_human}"}
-			 when "remove_contract"
-				 symbol = message['remove_contract']
-				 logger.debug{ "symbol to be removed: #{symbol}"}
-				 watchlist.remove_contract symbol.to_sym
-			 else
-				 logger.error{ "Command not recognized: #{kind}" }
-			 end
+	
 
 
+	def run
+		@queues.each do |watchlist, queue|
+
+			logger.formatter = proc do |level, time, prog, msg|
+				"#{time.strftime('%H:%M:%S')} #{msg}\n"
+			end
+			logger.info { "subscribing #{watchlist.inspect}" }
+			queue.subscribe do |delivery_info, metadata, payload|
+				# puts "Received #{JSON.parse(payload).inspect}"
+				message = JSON.parse( payload)
+				kind =  message.to_a.shift.shift
+				case kind
+				when "restart"
+					logger.error { "restart detected but not handled jet" } if message =={ 'restart' => true }
+					@response_exchange.publish( {IB::Gateway.current.advisor.account => "Restart not implemented"}.to_json , routing_key: kind )
+				when 'reset_watchlist'
+					watchlist.purge_collection
+					logger.debug{ "Collection purged" }
+					IB::Symbols.allocate_collection watchlist.name.split(":").last  # extract name from class
+				when "add_contract"
+					key, message = message.to_a.shift.pop
+					contract = if message.key?( 'Spread')
+											 IB::Spread.build_from_json(message)
+										 else
+											 IB::Contract.build_from_json(message)
+										 end
+					watchlist.add_contract key.to_sym, contract
+					logger.info{ "added  #{key}: #{contract.to_human} to watchlist #{watchlist.name.split(':').last}"}
+				when "remove_contract"
+					symbol = message['remove_contract']
+					logger.debug{ "symbol to be removed: #{symbol}"}
+					watchlist.remove_contract symbol.to_sym
+				when "ping"
+					puts "ping recognized from #{watchlist}"
+					@response_exchange.publish( IB::Gateway.current.advisor.account, routing_key: kind )
+				else
+					logger.error{ "Command not recognized: #{kind}" }
+				end		# case
+			end			# subscribe
    end
 	end
 end
@@ -147,5 +165,5 @@ end # Array
   puts '-'* 45
 
 	puts "  Rabbit Reciever started"
-	RabbitClient.new(logger: logger).run
+	RabbitClient.new(logger: logger, channels: watchlists).run
   IRB.start(__FILE__)
