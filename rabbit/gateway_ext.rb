@@ -1,4 +1,22 @@
 module IB
+
+	class Order
+			using IBSupport
+
+
+		def serialize_rabbit
+			{ 'Contract' => contract.present? ?  contract.serialize( :option, :trading_class ) : '' ,
+			  'Order' =>  self,
+			  'OrderState' => order_state}
+		end
+
+		def self.build_from_json container
+			the_order = IB::Order.new container['Order']
+			the_order.contract = IB::Contract.build_from_json container unless container['Contract'].blank?
+			the_order.order_state =  OrderState.new container['OrderState'] unless container['OrderState'].blank?
+			the_order #  return_value
+		end
+	end
 	class Contract
 			using IBSupport
 
@@ -8,10 +26,18 @@ module IB
 		end
 
 		def self.build_from_json container
-			IB::Contract.build container.values.first.read_contract
+			IB::Contract.build container['Contract'].read_contract
 
 		end
 	end
+
+	class Account
+		def net_liquidation
+			simple_account_data_scan( /NetLiquidation$/).pop.value.to_f
+		end
+		alias buchwert net_liquidation 
+	end
+
 
 	class Spread
 			using IBSupport

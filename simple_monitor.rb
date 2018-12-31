@@ -6,9 +6,10 @@ require 'yaml'
 module IB
 	class Gateway
 		def next_account account_or_id
-			sa = account_or_id.is_a?(IB::Account) ? account_or_id : @accounts.detect{|x| x.account == account_or_id }
-			the_position = @accounts.index sa
-			@accounts.size==1 ? @accounts.first : @accounts.at( the_position+1 >= @accounts.size ? 1 : the_position+1 )  
+			a =  active_accounts 
+			sa = account_or_id.is_a?(IB::Account) ? account_or_id : a.detect{|x| x.account == account_or_id }
+			the_position = a.index sa
+			a.size==1 ? a.first : a.at( the_position+1 >= a.size ? 1 : the_position+1 )  
 		end
 	end
 end
@@ -18,21 +19,30 @@ Camping.goes :Ibo
 module Ibo::Helpers
 	def gw  # returns the gateway-object or creates it and does basic bookkeeping
 		if IB::Gateway.current.nil?   # only the first time ...
+			set_alias = ->(account) do  # lambda to transfer alias name from yaml-file to account.alias
+				yaml_alias = read_tws_alias{ |s| s[:user][account.account]} 
+				account.alias = yaml_alias if yaml_alias.present? && !yaml_alias.empty?
+			end
+
 			host, client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] } # client_id 0 gets any open order
-			IB::Gateway.new(  host: host, client_id: client_id, 
+			iib=IB::Gateway.new(  host: host, client_id: client_id, 
 											logger: Logger.new('simple-monitor.log') , 
 											watchlists: read_tws_alias(:watchlist),
 											get_account_data: true ) do |g|
 												g.logger.level=Logger::INFO
 												g.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
 											end
-			IB::Gateway.current.update_orders				 # read pending_orders
+			iib.update_orders				 # read pending_orders
+			excluded_accounts = read_tws_alias(:exclude)
+			excluded_accounts.each{| a,_ | iib.for_selected_account(a){|x| x.disconnected! }} if excluded_accounts.present?			# don't handle excluded Accounts
+			iib.active_accounts.each{ |a| set_alias[a]} 
+			set_alias[iib.advisor]
 		end
 		IB::Gateway.current # return_value
 	end
+
 	def account_name account, allow_blank: false  # returns an Alias (if not given the AccountID)
-		the_name = read_tws_alias{ |s| s[:user][account.account]} ||  account.alias 
-		allow_blank && ( the_name == account.account ) ? "" :	the_name.presence || account.alias # return_value
+		allow_blank && ( account.account == account.account ) ? "" : account.alias # return_value
 	end
 
 	def locate_contract con_id, account = nil
@@ -104,7 +114,7 @@ module Ibo::Controllers
   class Index < R '/'
 		def get
 			@watchlists =  watchlists
-			if gw.active_accounts.size ==1 	# if a user-account is accessed
+			if gw.active_accounts.size ==1 	# if a single - user-account is accessed
 				@account =  gw.active_accounts.first     
 				render :show_account
 			else

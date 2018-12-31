@@ -14,6 +14,7 @@ require 'bundler/setup'
 require './simple_monitor' 
 require 'bunny'
 require './rabbit/gateway_ext'
+require './rabbit/client'
 include Ibo::Helpers
 
 ### RabbitClient connects to a fanout channel and handles messages for the management of watchlist-contents
@@ -53,9 +54,15 @@ class RabbitClient
 	  self #  make it chainable
 	end
 	
+	def pending_orders
+		IB::Gateway.current.update_orders				 # read pending_orders
+		sleep 1
+		IB::Gateway.current.active_accounts.map( &:orders ).flatten.compact
+	end
 
 
 	def run
+		gw =  IB::Gateway.current
 		@queues.each do |watchlist, queue|
 
 			logger.formatter = proc do |level, time, prog, msg|
@@ -67,10 +74,23 @@ class RabbitClient
 				message = JSON.parse( payload)
 				kind =  message.to_a.shift.shift
 				case kind
+				when 'place'
+					puts "place"
+					watchlist_symbol , order = message[kind]
+					order = IB::Order.build_from_json(order)
+					begin 
+						order.contract = watchlist[watchlist_symbol.to_sym] if order.contract.nil?
+					rescue IB::SymbolError => e
+						logger.error {"Contract #{watchlist_symbol} not defined in #{watchlist.name}"}
+						@response_exchange.publish( {gw.advisor.account => "Contract not defined, #{watchlist_symbol} NOT PLACED ", watchlist_symbol: watchlist_symbol}.to_json , routing_key: kind )
+					else  # process it no exception is raised
+					puts "order: #{order.to_human}"
+					end
+				
 				when "restart"
 					logger.error { "restart detected but not handled jet" } if message =={ 'restart' => true }
-					@response_exchange.publish( {IB::Gateway.current.advisor.account => "Restart not implemented"}.to_json , routing_key: kind )
-				when 'reset_watchlist'
+					@response_exchange.publish( {gw.advisor.account => "Restart not implemented"}.to_json , routing_key: kind )
+				when 'reset'
 					watchlist.purge_collection
 					logger.debug{ "Collection purged" }
 					IB::Symbols.allocate_collection watchlist.name.split(":").last  # extract name from class
@@ -88,10 +108,33 @@ class RabbitClient
 					logger.debug{ "symbol to be removed: #{symbol}"}
 					watchlist.remove_contract symbol.to_sym
 				when "ping"
-					puts "ping recognized from #{watchlist}"
-					@response_exchange.publish(IB::Gateway.current.advisor.to_json, routing_key: kind )
-					IB::Gateway.current.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind )
+					## Ping antwortet mit einer Liste von Usern (+ Advisor), jeweils als separate Message
+					@response_exchange.publish(gw.advisor.to_json, routing_key: kind )
+					gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind )
   }
+				when 'pending_orders'
+					pending_orders.each do |y|
+
+						c=			y.contract.serialize_rabbit
+						@response_exchange.publish( { account: y.account, 
+																					order:  y.serialize_rabbit}.to_json,
+																			  routing_key: 'pending_order')
+					end
+				when 'account-data'
+					gw.active_accounts.each do | account |
+						gw.get_account_data account
+					@response_exchange.publish({ account: account.account, 
+																	values: account.account_values}.to_json, 
+																	routing_key: kind )
+					end
+				when 'positions'
+					gw.active_accounts.each do | account |
+						gw.get_account_data account
+						transfer_object = account.portfolio_values.map{|y| { value: y}.merge  y.contract.serialize_rabbit }
+					@response_exchange.publish({ account: account.account, 
+																	values: transfer_object}.to_json, 
+																	routing_key: kind )
+					end
 				else
 					logger.error{ "Command not recognized: #{kind}" }
 				end		# case
@@ -133,18 +176,27 @@ end # Array
   include IB
   require 'irb'
 	d_host, d_client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] } # client_id 0 gets any open order
-  client_id =  d_client_id.zero? ? 900 : d_client_id-1
+  client_id =  d_client_id.zero? ? 0 : d_client_id-1
   ARGV.clear
   logger = Logger.new  STDOUT
   logger.formatter = proc do |level, time, prog, msg|
       "#{time.strftime('%H:%M:%S')} #{msg}\n"
 	end
 	logger.level = Logger::INFO 
-
+		set_alias = ->(account) do 
+			yaml_alias = read_tws_alias{ |s| s[:user][account.account]} 
+			account.alias = yaml_alias if yaml_alias.present? && !yaml_alias.empty?
+		end
  begin
 		G =  Gateway.new  get_account_data: true, serial_array: true,
 			client_id: client_id, host: d_host, logger: logger,
 			watchlists: read_tws_alias(:watchlist)
+
+		excluded_accounts = read_tws_alias(:exclude)
+		excluded_accounts.each{| a,_ | G.for_selected_account(a){ |x| x.disconnected! }}	if excluded_accounts.present?
+		set_alias[G.advisor]
+		G.active_accounts.each { |a| set_alias[a]} 
+
 	rescue IB::TransmissionError => e
 		puts "E: #{e.inspect}"
 	end
