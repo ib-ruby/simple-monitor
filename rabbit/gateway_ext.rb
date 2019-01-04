@@ -26,10 +26,10 @@ module IB
 		end
 
 		def self.build_from_json container
-			IB::Contract.build container['Contract'].read_contract
-
+			 IB::Contract.build( container['Contract'].read_contract)
 		end
 	end
+
 
 	class Account
 		def net_liquidation

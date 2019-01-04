@@ -22,17 +22,25 @@ class RabbitClient
   mattr_accessor :logger  ## borrowed from active_support
   mattr_accessor:current
 
-	def initialize  host: 'omega', #mailout.halfgarten-capital.de',
-									vhost: 'test',
-									username: 'topo',
-									password: 'focus',
+	def initialize  host: , #mailout.halfgarten-capital.de',
+									username: ,
+									password: ,
 									channels: [:HC],
 									logger: nil
 		watchlists = channels.map { |w| w.is_a?(Symbols)?  w : IB::Symbols.allocate_collection( w ) }
 		
 		
 		self.logger  ||=  Logger.new(STDOUT)
-		@connection = Bunny.new( host: host, vhost: vhost, username: username, password: password, logger: logger )
+		@connection = Bunny.new( host:  host,
+														vhost: 'hc', 
+															username: username, 
+															password: password ,
+															tls: true,
+															tsl_cert: '../ssl/cert.pem',
+															tsl_key: '../ssl/key.pem',
+															tls_ca_certificate: ['../ssl/cacert.pem'],
+															verify_peer:true 
+													 )
 
 		@connection.start
 		channel =  @connection.create_channel
@@ -60,6 +68,73 @@ class RabbitClient
 		IB::Gateway.current.active_accounts.map( &:orders ).flatten.compact
 	end
 
+	def place_the_order order, contract, focus
+		IB::Gateway.current.active_accounts.each do | account |
+				c =  nil; contract.verify{| y| c =  y }
+				ref_order = account.orders.detect{|x| x.contract.con_id == c.con_id && x.status =~ /ubmitted/}
+				if ref_order.present?
+					modify_the_order order, c
+				else
+					rc= Client.new(account)
+					rc.calculate_position order, c, focus
+					unless order.total_quantity.zero? 
+					  order.contract =  c
+						account.place order: order
+						logger.info{ "Order placed: #{order.to_human}" }
+					end
+				end
+		end
+	end
+
+	def cancel_the_order  contract
+		IB::Gateway.current.update_orders
+		IB::Gateway.current.active_accounts.each do | account |
+				IB::Gateway.current.cancel_order *account.orders.find_all{|x| x.contract.symbol == contract.symbol && x.status =~ /ubmitted/}
+			end
+	 end
+
+
+
+	def modify_the_order order, contract
+		IB::Gateway.current.update_orders
+		IB::Gateway.current.active_accounts.each do | account |
+				order.local_id = nil ## reset  local_id
+				c=  nil; contract.verify { |y| c=  y } 
+				ref_order = account.orders.detect{|x| x.contract.con_id == c.con_id && x.status =~ /ubmitted/}
+				if ref_order.present?
+					order.contract =  c
+					order.local_id  = ref_order.local_id
+					order.total_quantity = if order.total_quantity.zero?  # no change
+																		ref_order.total_quantity
+																 else 
+																	 amount = (ref_order.total_quantity * order.total_quantity.abs).round
+																	 if order.total_quantity < 0  # reduce
+																		 ref_order.total_quantity - amount
+																	 else
+																		 ref_order.total_quantity + amount
+																	 end
+																 end
+					order.modify	
+				else
+				 false
+				end
+		end
+	end
+
+	def close_the_contract order, contract
+		IB::Gateway.current.active_accounts.each do | account |
+			 order.local_id = nil ## reset  local_id
+			 account.close order: order, contract: contract
+		end
+	end
+
+	def reverse_the_position order, contract
+		IB::Gateway.current.active_accounts.each do | account |
+			 order.local_id = nil ## reset  local_id
+			 account.close order: order, contract: contract, reverse: true
+		end
+	end
+
 
 	def run
 		gw =  IB::Gateway.current
@@ -74,19 +149,38 @@ class RabbitClient
 				message = JSON.parse( payload)
 				kind =  message.to_a.shift.shift
 				case kind
-				when 'place'
+				when 'place', 'modify', 'reverse', 'close'
 					puts "place"
 					watchlist_symbol , order = message[kind]
-					order = IB::Order.build_from_json(order)
 					begin 
-						order.contract = watchlist[watchlist_symbol.to_sym] if order.contract.nil?
+						contract = watchlist[watchlist_symbol.to_sym]
 					rescue IB::SymbolError => e
 						logger.error {"Contract #{watchlist_symbol} not defined in #{watchlist.name}"}
 						@response_exchange.publish( {gw.advisor.account => "Contract not defined, #{watchlist_symbol} NOT PLACED ", watchlist_symbol: watchlist_symbol}.to_json , routing_key: kind )
-					else  # process it no exception is raised
-					puts "order: #{order.to_human}"
+					else  # process if no exception is raised
+						order = IB::Order.build_from_json(order)
+						case kind
+						when 'modify'
+							modify_the_order order, contract 
+						when 'place'
+							focus =  watchlist.name.split(':').last
+							place_the_order order, contract, focus
+						when 'reverse'
+							reverse_the_position order, contract
+						when 'close'
+							close_the_contract order, contract
+						end
 					end
-				
+				when 'cancel'
+					watchlist_symbol = message[kind]
+					puts "#{kind}: recognized #{watchlist_symbol}"
+					begin
+						contract = watchlist[watchlist_symbol.to_sym]
+					rescue IB::SymbolError
+						@response_exchange.publish( {gw.advisor.account => "Symbol #{watchlist_symbol} not Member of Watchlist #{watchlist.name.split(':').last}"}.to_json , routing_key: kind )
+					else	# if no exception was raised
+							cancel_the_order contract
+					end
 				when "restart"
 					logger.error { "restart detected but not handled jet" } if message =={ 'restart' => true }
 					@response_exchange.publish( {gw.advisor.account => "Restart not implemented"}.to_json , routing_key: kind )
@@ -167,7 +261,7 @@ end # Array
 
 
   puts 
-  puts ">> S I M P L E – M O N I T O R  Interactive Console <<" 
+  puts ">> R A B B I T – M O N I T O R  Interactive Console <<" 
   puts '-'* 45
   puts 
   puts "Namespace is IB ! "
@@ -217,7 +311,11 @@ end # Array
 	puts  "Allocated Watchlists:"
 	puts  watchlists.map{|w| w.to_s}.join "\n"
   puts '-'* 45
-
+	rabbit_credentials= read_tws_alias( :rabbit )
 	puts "  Rabbit Reciever started"
-	RabbitClient.new(logger: logger, channels: watchlists).run
+	(R= RabbitClient.new(logger: logger, 
+									 channels: watchlists, 
+									 username: rabbit_credentials[:user],
+									 password: rabbit_credentials[:password],
+									 host: rabbit_credentials[:host])).run
   IRB.start(__FILE__)
