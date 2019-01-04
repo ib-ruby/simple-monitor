@@ -57,6 +57,7 @@ module IB
 
 			end
 			object= self.new  container['Spread'].read_contract
+
 			object.legs = container['legs'].map{|x| IB::Contract.build x.read_contract}
 			object.combo_legs = container['combo_legs'].map{ |x| read_leg[ x ] } 
 			object.description = container['misc'].read_string

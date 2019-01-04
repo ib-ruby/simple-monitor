@@ -39,7 +39,7 @@ class RabbitClient
 															tsl_cert: '../ssl/cert.pem',
 															tsl_key: '../ssl/key.pem',
 															tls_ca_certificate: ['../ssl/cacert.pem'],
-															verify_peer:true 
+															verify_peer:false 
 													 )
 
 		@connection.start
