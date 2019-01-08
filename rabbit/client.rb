@@ -71,12 +71,15 @@ class Client
 	def calculate_position order,contract, focus 	#  returns the calculated position size
 #		round_capital = ->(z){ z.round -((z.to_i.to_s.size) -2) }
 		round_capital = ->(z){ z.round -(Math.log10(z).to_i)+1 }  # just the first two digits, rest "0"
-	
+		return(0) if 	 read_defaults( :Anlageschwerpunkte )[focus.to_sym].nil?
+
 		size =  read_defaults( :Anlageschwerpunkte )[focus.to_sym][contract.symbol.to_sym] || 0
 		
 		if size == -1 
 			#  automatic determination
 			ratio= read_defaults( :Anlageschwerpunkte )[focus.to_sym][:Ratio]
+			return(0) if ratio.nil?
+
 			max_capital = round_capital[ @account.net_liquidation * ratio ]
 			max_capital = order.total_quantity.to_f.zero? ? max_capital : order.total_quantity.to_f * max_capital
 			price =  order.limit_price.presence ||  order.aux_price
@@ -96,7 +99,7 @@ class Client
 
 			((	( max_capital / price ) / min_size ) *  min_size).to_i
 		else
-			size
+			order.total_quantity.to_f.zero? ? size : ( order.total_quantity.to_f * size ).round
 		end
 
 #		ratio = 
