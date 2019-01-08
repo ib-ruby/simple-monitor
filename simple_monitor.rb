@@ -34,7 +34,7 @@ module Ibo::Helpers
 											end
 			iib.update_orders				 # read pending_orders
 			excluded_accounts = read_tws_alias(:exclude)
-			excluded_accounts.each{| a,_ | iib.for_selected_account(a){|x| x.disconnected! }} if excluded_accounts.present?			# don't handle excluded Accounts
+			excluded_accounts.keys.each{| a | iib.for_selected_account(a.to_s){|x| x.disconnected! }} if excluded_accounts.present?			# don't handle excluded Accounts
 			iib.active_accounts.each{ |a| set_alias[a]} 
 			set_alias[iib.advisor]
 		end

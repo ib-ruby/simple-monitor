@@ -317,7 +317,7 @@ end # Array
 			watchlists: read_tws_alias(:watchlist)
 
 		excluded_accounts = read_tws_alias(:exclude)
-		excluded_accounts.each{| a,_ | G.for_selected_account(a){ |x| x.disconnected! }}	if excluded_accounts.present?
+		excluded_accounts.keys.each{| a | G.for_selected_account(a.to_s){ |x| x.disconnected! }}	if excluded_accounts.present?
 		set_alias[G.advisor]
 		G.active_accounts.each { |a| set_alias[a]} 
 
