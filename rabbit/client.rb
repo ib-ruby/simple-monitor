@@ -28,6 +28,12 @@ class Client
 		end
 	end
 
+	def change_default topic
+		modified_defaults = yield read_defaults[:Anlageschwerpunkte][topic.to_sym]
+		the_new_defaults =  read_defaults 
+		the_new_defaults[ :Anlageschwerpunkte][topic.to_sym] = modified_defaults
+		filename.open( 'w' ){|f| f.write the_new_defaults.to_yaml}
+	end
 	def categories
 
 					 	 { IB::Option =>  :Optionsstrategie,
@@ -62,36 +68,38 @@ class Client
 			read_defaults( :Anlageschwerpunkte )[contract.misc.to_sym][contract.symbol.to_sym] || 0
 	end
 
-	def calculate_position order,contract, focus 	#  modifies the order-object
+	def calculate_position order,contract, focus 	#  returns the calculated position size
 #		round_capital = ->(z){ z.round -((z.to_i.to_s.size) -2) }
 		round_capital = ->(z){ z.round -(Math.log10(z).to_i)+1 }  # just the first two digits, rest "0"
-		size =  read_defaults( :Anlageschwerpunkte )[focus.to_sym][contract.symbol.to_sym] || 0
 	
-		order.total_quantity = 	if size == -1 
-															#  automatic determination
-															ratio= read_defaults( :Anlageschwerpunkte )[focus][:Ratio]
-															max_capital = round_capital[ @account.net_liquidation * ratio ]
-															price =  order.limit_price.presence ||  order.aux_price
-															min_size =  if price < 5
-																						1000
-																					elsif price < 10
-																						500
-																					elsif price < 50
-																						100
-																					elsif price < 85
-																						50
-																					elsif price < 300
-																						10
-																					else
-																						1
-																					end
+		size =  read_defaults( :Anlageschwerpunkte )[focus.to_sym][contract.symbol.to_sym] || 0
+		
+		if size == -1 
+			#  automatic determination
+			ratio= read_defaults( :Anlageschwerpunkte )[focus.to_sym][:Ratio]
+			max_capital = round_capital[ @account.net_liquidation * ratio ]
+			max_capital = order.total_quantity.to_f.zero? ? max_capital : order.total_quantity.to_f * max_capital
+			price =  order.limit_price.presence ||  order.aux_price
+			min_size =  if price < 5
+										1000
+									elsif price < 10
+										500
+									elsif price < 50
+										100
+									elsif price < 85
+										50
+									elsif price < 300
+										10
+									else
+										1
+									end
 
-															(	( max_capital / price ) / min_size ) *  min_size
-														else
-															size
-														end
+			((	( max_capital / price ) / min_size ) *  min_size).to_i
+		else
+			size
+		end
 
-#		ratio = order.total_quantity.to_f.zero? ? 1: order.total_quantity.to_f 
+#		ratio = 
 #		order.total_quantity = (size(order.symbol) * ratio).round
 	end
 end

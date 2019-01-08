@@ -68,6 +68,25 @@ class RabbitClient
 		IB::Gateway.current.active_accounts.map( &:orders ).flatten.compact
 	end
 
+	def change_default_value_for watchlist, contract, size
+		IB::Gateway.current.active_accounts.each do | account |
+					rc= Client.new(account)
+					rc.change_default(watchlist.name.split(':').last) do | current |
+						current[contract.symbol.to_sym] = size 
+						current
+					end
+			end
+	end
+	def return_calculated_position order, contract, focus
+		IB::Gateway.current.active_accounts.each do | account |
+					rc= Client.new(account)
+					c =  nil; contract.verify{| y | c =  y }
+					puts "order: #{order.total_quantity}"
+					the_size = rc.calculate_position order, c, focus
+				
+					@response_exchange.publish( {account.account => { contract: contract.serialize_rabbit, size: the_size }}.to_json , routing_key: 'preview' )
+		end
+	end
 	def place_the_order order, contract, focus
 		IB::Gateway.current.active_accounts.each do | account |
 				c =  nil; contract.verify{| y| c =  y }
@@ -149,7 +168,7 @@ class RabbitClient
 				message = JSON.parse( payload)
 				kind =  message.to_a.shift.shift
 				case kind
-				when 'place', 'modify', 'reverse', 'close'
+				when 'place', 'modify', 'reverse', 'close', 'preview'
 					puts "place"
 					watchlist_symbol , order = message[kind]
 					begin 
@@ -169,6 +188,9 @@ class RabbitClient
 							reverse_the_position order, contract
 						when 'close'
 							close_the_contract order, contract
+						when 'preview'
+							focus =  watchlist.name.split(':').last
+							return_calculated_position order, contract, focus
 						end
 					end
 				when 'cancel'
@@ -189,7 +211,7 @@ class RabbitClient
 					logger.debug{ "Collection purged" }
 					IB::Symbols.allocate_collection watchlist.name.split(":").last  # extract name from class
 				when "add_contract"
-					key, message = message.to_a.shift.pop
+					key, message = message[kind].to_a
 					contract = if message.key?( 'Spread')
 											 IB::Spread.build_from_json(message)
 										 else
@@ -197,29 +219,37 @@ class RabbitClient
 										 end
 					watchlist.add_contract key.to_sym, contract
 					logger.info{ "added  #{key}: #{contract.to_human} to watchlist #{watchlist.name.split(':').last}"}
-				when "remove_contract"
-					symbol = message['remove_contract']
-					logger.debug{ "symbol to be removed: #{symbol}"}
-					watchlist.remove_contract symbol.to_sym
+
+				when "change_default" 
+					symbol = message[kind]
+					begin
+						contract =  watchlist.send message[kind].shift.to_sym
+					rescue IB::SymbolError
+						@response_exchange.publish( {gw.advisor.account => "Symbol #{watchlist_symbol} not Member of Watchlist #{watchlist.name.split(':').last}"}.to_json , routing_key: kind )
+					else	# if no exception was raised
+						size = message[kind].shift.to_i
+						change_default_value_for watchlist, contract, size
+					end	
+       when "remove_contract"
+				 symbol = message[kind]
+				 logger.debug{ "symbol to be removed: #{symbol}"}
+				 watchlist.remove_contract symbol.to_sym
 				when "ping"
 					## Ping antwortet mit einer Liste von Usern (+ Advisor), jeweils als separate Message
 					@response_exchange.publish(gw.advisor.to_json, routing_key: kind )
-					gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind )
-  }
+					gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind ) }
 				when 'pending_orders'
-					pending_orders.each do |y|
-
-						c=			y.contract.serialize_rabbit
-						@response_exchange.publish( { account: y.account, 
-																					order:  y.serialize_rabbit}.to_json,
-																			  routing_key: 'pending_order')
+					pending_orders.each do |account|
+						@response_exchange.publish( { account: account.account, 
+																					order:  account.serialize_rabbit}.to_json,
+																			  routing_key: kind )
 					end
 				when 'account-data'
 					gw.active_accounts.each do | account |
 						gw.get_account_data account
-					@response_exchange.publish({ account: account.account, 
-																	values: account.account_values}.to_json, 
-																	routing_key: kind )
+						@response_exchange.publish({ account: account.account, 
+																	 values: account.account_values}.to_json, 
+																	 routing_key: kind )
 					end
 				when 'positions'
 					gw.active_accounts.each do | account |
