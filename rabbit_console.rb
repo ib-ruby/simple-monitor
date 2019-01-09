@@ -104,7 +104,7 @@ class RabbitClient
 					unless order.total_quantity.zero? || ref_position.present?
 					  order.contract =  c    # do not verify further
 						account.place order: order
-						logger.info{ "Order placed: #{order.to_human}" }
+						logger.info{ "#{@account.alias} -> Order placed: #{order.action} #{order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{c.to_human}" }
 					end
 				end
 		end
