@@ -16,6 +16,16 @@ module IB
 			the_order.order_state =  OrderState.new container['OrderState'] unless container['OrderState'].blank?
 			the_order #  return_value
 		end
+
+		def self.duplicate another_order
+			o = IB::Order.new another_order.attributes
+			o.conditions =  another_order.conditions
+			o.order_states =  another_order.order_states
+			o.leg_prices = another_order.leg_prices
+			o.algo_params = another_order.algo_params
+			o.combo_params= another_order.combo_params
+			o
+		end
 	end
 	class Contract
 			using IBSupport
@@ -36,6 +46,11 @@ module IB
 			simple_account_data_scan( /NetLiquidation$/).pop.value.to_f
 		end
 		alias buchwert net_liquidation 
+
+
+		def present_position contract
+
+		end
 	end
 
 
@@ -69,6 +84,9 @@ module IB
 
 	class Gateway
 
+		def active_watchlists
+		 @watchlists
+		end
 		def build_from_json container
 			if container.key?('Spread')
 				Spread.build_from_json container
