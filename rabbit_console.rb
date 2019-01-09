@@ -95,9 +95,14 @@ class RabbitClient
 					modify_the_order order, c
 				else
 					rc= Client.new(account)
-					rc.calculate_position order, c, focus
-					unless order.total_quantity.zero? 
-					  order.contract =  c
+					order.total_quantity = rc.calculate_position( order, c, focus)
+
+					ref_position = account.portfolio_values.detect do |pv| 
+						 c.is_a?(IB::Spread) ?  pv.contract.con_id == c.legs.first.con_id : pv.contract.con_id == c.con_id 
+					end
+				puts "Found existing position: #{ref_position.to_human}"	  if ref_position.present?
+					unless order.total_quantity.zero? || ref_position.present?
+					  order.contract =  c    # do not verify further
 						account.place order: order
 						logger.info{ "Order placed: #{order.to_human}" }
 					end
@@ -169,7 +174,6 @@ class RabbitClient
 				kind =  message.to_a.shift.shift
 				case kind
 				when 'place', 'modify', 'reverse', 'close', 'preview'
-					puts "place"
 					watchlist_symbol , order = message[kind]
 					begin 
 						contract = watchlist[watchlist_symbol.to_sym]
