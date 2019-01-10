@@ -317,14 +317,18 @@ end # Array
 			account.alias = yaml_alias if yaml_alias.present? && !yaml_alias.empty?
 		end
  begin
-		G =  Gateway.new  get_account_data: true, serial_array: true,
-			client_id: client_id, host: d_host, logger: logger,
-			watchlists: read_tws_alias(:watchlist)
+
+		G =  Gateway.new  get_account_data: false, serial_array: true,
+			client_id: client_id, host: d_host, logger: logger
 
 		excluded_accounts = read_tws_alias(:exclude)
 		excluded_accounts.keys.each{| a | G.for_selected_account(a.to_s){ |x| x.disconnected! }}	if excluded_accounts.present?
 		set_alias[G.advisor]
 		G.active_accounts.each { |a| set_alias[a]} 
+
+		a = G.active_accounts.map{|x| Client.new x}
+		watchlists = a.map{|b| b.read_defaults[:Anlageschwerpunkte].keys}.flatten.uniq
+		G.get_account_data    watchlists: watchlists.map{|y| Symbols.allocate_collection y.to_sym}
 
 	rescue IB::TransmissionError => e
 		puts "E: #{e.inspect}"
