@@ -56,7 +56,7 @@ class Client
 																				ES: 0,
 																				SPX: 0,  
 																				HSI: 1, 
-																				ASX: 1  },
+																				AP: 1  },
 															Bond: { Ratio: 0.7, FAX: 0, ZN: 1, ZB: 0, GBL: 1, BTP: 0 } 
 															}
 				}

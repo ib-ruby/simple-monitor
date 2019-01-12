@@ -240,9 +240,11 @@ class RabbitClient
 				 logger.debug{ "symbol to be removed: #{symbol}"}
 				 watchlist.remove_contract symbol.to_sym
 				when "ping"
-					## Ping antwortet mit einer Liste von Usern (+ Advisor), jeweils als separate Message
-					@response_exchange.publish(gw.advisor.to_json, routing_key: kind )
-					gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind ) }
+					# ensure that the connection is established
+					if gw.check_connection 
+						@response_exchange.publish(gw.advisor.to_json, routing_key: kind ) 
+						gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind ) }
+					end
 				when 'pending_orders'
 					pending_orders.each do |account|
 						@response_exchange.publish( { account: account.account, 
