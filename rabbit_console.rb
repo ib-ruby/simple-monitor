@@ -337,7 +337,7 @@ end # Array
 	end
 	C =  G.tws
   unless  C.received[:OpenOrder].blank?
-        puts "------------------------------- OpenOrders ----------------------------------"
+    puts "------------------------------- OpenOrders ----------------------------------"
     puts C.received[:OpenOrder].to_human.join "\n"
   end
   puts  "Connection established on  #{d_host}, client_id #{client_id} used"
@@ -353,6 +353,7 @@ end # Array
 	puts  watchlists.map{|w| w.to_s}.join "\n"
   puts '-'* 45
 	rabbit_credentials= read_tws_alias( :rabbit )
+	error "No Rabbit credentials" if rabbit_credentials.empty?
 	puts "  Rabbit Reciever started"
 	(R= RabbitClient.new(logger: logger, 
 									 channels: watchlists, 
