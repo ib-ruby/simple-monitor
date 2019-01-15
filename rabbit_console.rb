@@ -45,6 +45,7 @@ class RabbitClient
 		@connection.start
 		channel =  @connection.create_channel
 		@response_exchange = channel.direct("response") 
+		@error_exchange = channel.direct("error") 
 		create_queue = -> { c= @connection.create_channel; c.queue('', exclusive: true) }
 		@queues = watchlists.map do |ch|
 	#		channel =  @connection.create_channel
@@ -173,102 +174,98 @@ class RabbitClient
 				# puts "Received #{JSON.parse(payload).inspect}"
 				message = JSON.parse( payload)
 				kind =  message.to_a.shift.shift
-				case kind
-				when 'place', 'modify', 'reverse', 'close', 'preview'
-					watchlist_symbol , order = message[kind]
-					begin 
-						contract = watchlist[watchlist_symbol.to_sym]
-					rescue IB::SymbolError => e
-						logger.error {"Contract #{watchlist_symbol} not defined in #{watchlist.name}"}
-						@response_exchange.publish( {gw.advisor.account => "Contract not defined, #{watchlist_symbol} NOT PLACED ", watchlist_symbol: watchlist_symbol}.to_json , routing_key: kind )
-					else  # process if no exception is raised
-						order = IB::Order.build_from_json(order)
-						case kind
-						when 'modify'
-							modify_the_order order, contract 
-						when 'place'
+				if gw.check_connection   # ensure that the connection is operative 
+					case kind
+					when 'place', 'modify', 'reverse', 'close', 'preview'
+						watchlist_symbol , raw_order = message[kind]
+						begin 
+							contract = watchlist[watchlist_symbol.to_sym]
+						rescue IB::SymbolError => e
+							logger.error {"Contract #{watchlist_symbol} not defined in #{watchlist.name}"}
+							@response_exchange.publish( {gw.advisor.account => "Contract not defined, #{watchlist_symbol} NOT PLACED ", watchlist_symbol: watchlist_symbol}.to_json , routing_key: kind )
+						else  # process if no exception is raised
 							focus =  watchlist.name.split(':').last
-							place_the_order order, contract, focus
-						when 'reverse'
-							reverse_the_position order, contract
-						when 'close'
-							close_the_contract order, contract
-						when 'preview'
-							focus =  watchlist.name.split(':').last
-							return_calculated_position order, contract, focus
+							order = IB::Order.build_from_json(raw_order)
+							case kind
+							when 'modify'
+								modify_the_order order, contract 
+							when 'place'
+								place_the_order order, contract, focus
+							when 'reverse'
+								reverse_the_position order, contract
+							when 'close'
+								close_the_contract order, contract
+							when 'preview'
+								return_calculated_position order, contract, focus
+							end
 						end
-					end
-				when 'cancel'
-					watchlist_symbol = message[kind]
-					puts "#{kind}: recognized #{watchlist_symbol}"
-					begin
-						contract = watchlist[watchlist_symbol.to_sym]
-					rescue IB::SymbolError
-						@response_exchange.publish( {gw.advisor.account => "Symbol #{watchlist_symbol} not Member of Watchlist #{watchlist.name.split(':').last}"}.to_json , routing_key: kind )
-					else	# if no exception was raised
+					when 'cancel'
+						watchlist_symbol = message[kind]
+						begin
+							contract = watchlist[watchlist_symbol.to_sym]
+						rescue IB::SymbolError
+							@response_exchange.publish( {gw.advisor.account => "Symbol #{watchlist_symbol} not Member of Watchlist #{watchlist.name.split(':').last}"}.to_json , routing_key: kind )
+						else	# if no exception was raised
 							cancel_the_order contract
-					end
-				when "restart"
-					logger.error { "restart detected but not handled jet" } if message =={ 'restart' => true }
-					@response_exchange.publish( {gw.advisor.account => "Restart not implemented"}.to_json , routing_key: kind )
-				when 'reset'
-					watchlist.purge_collection
-					logger.debug{ "Collection purged" }
-					IB::Symbols.allocate_collection watchlist.name.split(":").last  # extract name from class
-				when "add_contract"
-					key, message = message[kind].to_a
-					contract = if message.key?( 'Spread')
-											 IB::Spread.build_from_json(message)
-										 else
-											 IB::Contract.build_from_json(message)
-										 end
-					watchlist.add_contract key.to_sym, contract
-					logger.info{ "added  #{key}: #{contract.to_human} to watchlist #{watchlist.name.split(':').last}"}
+						end
+					when "restart"
+						logger.error { "restart detected but not handled jet" } 
+						@response_exchange.publish( {gw.advisor.account => "Restart not implemented"}.to_json , routing_key: kind )
+					when 'reset'
+						watchlist.purge_collection
+						logger.debug{ "Collection purged" }
+						IB::Symbols.allocate_collection watchlist.name.split(":").last  # extract name from class
+					when "add_contract"
+						key, message = message[kind].to_a
+						contract = gw.build_from_json(message)
+						watchlist.add_contract key.to_sym, contract
+						logger.info{ "added  #{key}: #{contract.to_human} to watchlist #{watchlist.name.split(':').last}"}
 
-				when "change_default" 
-					symbol = message[kind]
-					begin
-						contract =  watchlist.send message[kind].shift.to_sym
-					rescue IB::SymbolError
-						@response_exchange.publish( {gw.advisor.account => "Symbol #{watchlist_symbol} not Member of Watchlist #{watchlist.name.split(':').last}"}.to_json , routing_key: kind )
-					else	# if no exception was raised
-						size = message[kind].shift.to_i
-						change_default_value_for watchlist, contract, size
-					end	
-       when "remove_contract"
-				 symbol = message[kind]
-				 logger.debug{ "symbol to be removed: #{symbol}"}
-				 watchlist.remove_contract symbol.to_sym
-				when "ping"
-					# ensure that the connection is established
-					if gw.check_connection 
-						@response_exchange.publish(gw.advisor.to_json, routing_key: kind ) 
-						gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind ) }
-					end
-				when 'pending_orders'
-					pending_orders.each do |account|
-						@response_exchange.publish( { account: account.account, 
-																					order:  account.serialize_rabbit}.to_json,
-																			  routing_key: kind )
-					end
-				when 'account-data'
-					gw.active_accounts.each do | account |
-						gw.get_account_data account
-						@response_exchange.publish({ account: account.account, 
-																	 values: account.account_values}.to_json, 
-																	 routing_key: kind )
-					end
-				when 'positions'
-					gw.active_accounts.each do | account |
-						gw.get_account_data account
-						transfer_object = account.portfolio_values.map{|y| { value: y}.merge  y.contract.serialize_rabbit }
-					@response_exchange.publish({ account: account.account, 
-																	values: transfer_object}.to_json, 
-																	routing_key: kind )
-					end
+					when "change_default" 
+						symbol = message[kind]
+						begin
+							contract =  watchlist.send message[kind].shift.to_sym
+						rescue IB::SymbolError
+							@response_exchange.publish( {gw.advisor.account => "Symbol #{watchlist_symbol} not Member of Watchlist #{watchlist.name.split(':').last}"}.to_json , routing_key: kind )
+						else	# if no exception was raised
+							size = message[kind].shift.to_i
+							change_default_value_for watchlist, contract, size
+						end	
+					when "remove_contract"
+						symbol = message[kind]
+						logger.debug{ "symbol to be removed: #{symbol}"}
+						watchlist.remove_contract symbol.to_sym
+					when "ping"
+							@response_exchange.publish(gw.advisor.to_json, routing_key: kind ) 
+							gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind ) }
+					when 'pending_orders'
+						pending_orders.each do |account|
+							@response_exchange.publish( { account: account.account, 
+																		 order:  account.serialize_rabbit}.to_json,
+																		 routing_key: kind )
+						end
+					when 'account-data', 'positions'
+						gw.active_accounts.each do | account |
+							gw.get_account_data account
+							if kind == 'account-data'
+								@response_exchange.publish({ account: account.account, 
+																		 values: account.account_values}.to_json, 
+																		 routing_key: kind )
+							else
+								transfer_object = account.portfolio_values.map{|y| { value: y}.merge  y.contract.serialize_rabbit }
+								@response_exchange.publish({ account: account.account, 
+																		 values: transfer_object}.to_json, 
+																		 routing_key: kind )
+							end
+						end
+						else
+						logger.error{ "Command not recognized: #{kind}" }
+					end		# case
 				else
-					logger.error{ "Command not recognized: #{kind}" }
-				end		# case
+					logger.error  {"No Connection to TWS-Server"}
+
+					@error_exchange.publish( {gw.advisor.account => "No Commection to TWS"}.to_json , routing_key: 'connection' )
+				end # if check_connection
 			end			# subscribe
    end
 	end
@@ -353,7 +350,7 @@ end # Array
 	puts  watchlists.map{|w| w.to_s}.join "\n"
   puts '-'* 45
 	rabbit_credentials= read_tws_alias( :rabbit )
-	error "No Rabbit credentials" if rabbit_credentials.empty?
+	error "No Rabbit credentials" if rabbit_credentials.nil? || rabbit_credentials.empty?
 	puts "  Rabbit Reciever started"
 	(R= RabbitClient.new(logger: logger, 
 									 channels: watchlists, 

@@ -89,11 +89,11 @@ module IB
 		end
 		def build_from_json container
 			if container.key?('Spread')
-				Spread.build_from_json container
+				IB::Spread.build_from_json container
 			elsif  container.key?('Contract')
-				IB::Contract.build container
+				IB::Contract.build_from_json container
 			elsif container.key?('Order')
-				IB::Order.new container
+				IB::Order.build_from_json container
 			end
 		end
 
