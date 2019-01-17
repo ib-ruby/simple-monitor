@@ -35,7 +35,7 @@ module Ibo::Helpers
 											end
 			iib.update_orders				 # read pending_orders
 			excluded_accounts = read_tws_alias(:exclude)
-			excluded_accounts.keys.each{| a | iib.for_selected_account(a.to_s){|x| x.disconnected! }} if excluded_accounts.present?			# don't handle excluded Accounts
+			excluded_accounts.keys.each{| a | iib.for_selected_account(a.to_s){|x| x.disconnect! }} if excluded_accounts.present?			# don't handle excluded Accounts
 			iib.active_accounts.each{ |a| set_alias[a]} 
 			set_alias[iib.advisor]
 		end
@@ -210,7 +210,7 @@ module Ibo::Controllers
 
  class ContractX # < R '/contract/(\d+)/select'
 	 def post account_id
-		 if check_connection
+		 if gw.check_connection
 			 the_watchlist = -> {IB::Symbols.allocate_collection input.keys.first.to_sym }
 			 initialize_watchlist_and_account account_id
 			 # input (a) --> Hash: Watchlist_name => symbol as string
@@ -239,7 +239,7 @@ module Ibo::Controllers
 
 	class MultiOrderN
 		def post con_id
-			if check_connection
+			if gw.check_connection
 				contract =  gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
 				order_fields =  @input.reject{|x| x=='total_quantity'}   # all other input-fields
 				count_of_order_state = read_order_status
@@ -258,7 +258,7 @@ module Ibo::Controllers
 	end
  class OrderXX 
 	 def get account_id, local_id  # (Get-Request) used  to cancel an order
-		 if check_connection
+		 if gw.check_connection
 			 gw.for_selected_account(account_id) do |account|
 				 order = account.locate_order local_id: local_id.to_i 
 				 if order.is_a? IB::Order
@@ -278,7 +278,7 @@ module Ibo::Controllers
 
 
 	def post account_id, con_id  # (POST Request) used to  to place an order
-		if check_connection
+		if gw.check_connection
 			count_of_order_state_messages = read_order_status
 			gw.for_selected_account(account_id) do |account|
 				contract= locate_contract con_id, account
