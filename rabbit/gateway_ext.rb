@@ -1,13 +1,11 @@
 module IB
-
 	class Order
-			using IBSupport
-
+		using IBSupport
 
 		def serialize_rabbit
-			{ 'Contract' => contract.present? ?  contract.serialize( :option, :trading_class ) : '' ,
-			  'Order' =>  self,
-			  'OrderState' => order_state}
+			{ 'Contract' => contract.present? ? contract.serialize( :option, :trading_class ): '' ,
+		 'Order' =>  self,
+		 'OrderState' => order_state}
 		end
 
 		def self.build_from_json container
@@ -26,34 +24,45 @@ module IB
 			o.combo_params= another_order.combo_params
 			o
 		end
-	end
-	class Contract
-			using IBSupport
 
-		
-		def serialize_rabbit
-			{ 'Contract' => serialize( :option, :trading_class ) }
+		def the_essentials
+			the_price = case self[:order_type]
+									when 'LMT','LIT','LOC','LOO', 'MTL'
+										limit_price
+									when 'STP', 'STP PRT', 'MIT'
+										aux_price
+									when 'STP LMT'
+										" #{aux_price} / #{limit_price}"
+									when
+										"MKT", 'MOO', 'MOC','MKT PRT'
+										" -- "
+									else
+										" #{limit_price} / #{aux_price}"
+									end
+			[side, total_quantity, order_type, the_price]
 		end
 
-		def self.build_from_json container
-			 IB::Contract.build( container['Contract'].read_contract)
-		end
 	end
-
-
-	class Account
+class Account
 		def net_liquidation
 			simple_account_data_scan( /NetLiquidation$/).pop.value.to_f
 		end
 		alias buchwert net_liquidation 
-
-
-		def present_position contract
-
-		end
 	end
 
+	class Contract
+			using IBSupport
 
+		def serialize_rabbit
+			{ 'Contract' => serialize( :option, :trading_class ) }
+		end
+
+			
+		def self.build_from_json container
+			IB::Contract.build( container['Contract'].read_contract)
+		end
+
+	end
 	class Spread
 			using IBSupport
 
@@ -72,7 +81,6 @@ module IB
 
 			end
 			object= self.new  container['Spread'].read_contract
-
 			object.legs = container['legs'].map{|x| IB::Contract.build x.read_contract}
 			object.combo_legs = container['combo_legs'].map{ |x| read_leg[ x ] } 
 			object.description = container['misc'].read_string
@@ -84,12 +92,9 @@ module IB
 
 	class Gateway
 
-		def active_watchlists
-		 @watchlists
-		end
 		def build_from_json container
 			if container.key?('Spread')
-				IB::Spread.build_from_json container
+				Spread.build_from_json container
 			elsif  container.key?('Contract')
 				IB::Contract.build_from_json container
 			elsif container.key?('Order')
