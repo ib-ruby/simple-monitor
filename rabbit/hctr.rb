@@ -64,8 +64,12 @@ class  HCTR
 	def return_calculated_position order, contract, focus
 		contract_size = ->(a,c) do			# note: portfolio_value.position is either positiv or negativ
 			if c.con_id <0 # Spread
-				p = a.portfolio_values.detect{|p| p.contract.con_id ==c.legs.first.con_id}.position.to_i
-				p / c.combo_legs.first.weight  rescue 0  # rescue: if p.zero?
+				p = a.portfolio_values.detect{|p| p.contract.con_id ==c.legs.first.con_id}
+			  if p.nil?
+					0
+				else 
+				p.position.to_i / c.combo_legs.first.weight  rescue 0  # rescue: if p.zero?
+				end
 			else
 				a.portfolio_values.detect{|x| x.contract.con_id == c.con_id} || 0
 			end
@@ -75,10 +79,8 @@ class  HCTR
 		IB::Gateway.current.active_accounts.each do | account |
 					c =  nil; contract.verify{| y | c =  y }
 					actual_size =  contract_size[account,c]
-					puts "actual_size: #{actual_size}"
 					if actual_size.zero?
 						rc= Client.new(account)
-						puts "order: #{order.total_quantity}"
 						the_size = rc.calculate_position order, c, focus
 					else
 						the_size =  -(actual_size.abs)
