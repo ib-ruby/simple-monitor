@@ -9,7 +9,6 @@ module IB
 			a =  active_accounts 
 			sa = account_or_id.is_a?(IB::Account) ? account_or_id : a.detect{|x| x.account == account_or_id }
 			the_position = a.index sa
-			puts "the position #{the_position}"
 			a.size==1 ||  the_position == a.size-1  ? a.first : a.at( the_position+1 )  
 		end
 	end
@@ -49,7 +48,7 @@ module Ibo::Helpers
 	def locate_contract con_id, account = nil
 		watchlist_entry = -> {watchlists.map{|y| y.detect{|c| c.con_id.to_i == con_id.to_i} rescue nil }.compact.first }
 		c= if account.present?
-				 account.locate_contract( con_id) || account.complex_position( con_id )
+				 account.locate_contract( con_id ) || account.complex_position( con_id )
 			 else
 				 gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
 			 end
@@ -175,7 +174,7 @@ module Ibo::Controllers
 	def get account_id
 		if gw.check_connection
 			initialize_watchlist_and_account account_id
-			@contract = IB::Stock.new con_id: -2
+			@contract = nil #IB::Stock.new con_id: -2
 			@account_values = init_account_values
 			render :contract_mask
 		else
@@ -405,7 +404,8 @@ module Ibo::Views
 
 	def contract_mask
 		input_row = ->( field , comment='' ) do
-			tr { td( field.capitalize ); td { input type: :text, value: @contract[field] , name: field }; td comment }
+			the_value =  @contract.present? ? @contract[field] : "" 
+			tr { td( field.capitalize ); td { input type: :text, value: the_value , name: field }; td comment }
 		end
 		show_account
 		table do
@@ -437,37 +437,37 @@ module Ibo::Views
 				end # each
 			end   # tr
 		end  # table
-		if @contract.description.nil? || @contract.con_id.to_s.to_i >= 0
+		if @contract &.description.nil? || @contract &.con_id.to_s.to_i >= 0
 			form action: R(ContractX, @account.account), method: 'post' do
 				table do
 			tr.exited do
 				td( colspan:3, align:'left' ) { 'Contract-Mask' }
 			end
-					input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : @contract.to_human]
-					input_row['symbol',  " market price : #{@contract.market_price}  (delayed)" ]
-					input_row['currency', @contract.con_id.to_s.to_i >0  ? " con-id : #{@contract.con_id}" : '' ]
-					input_row['expiry', @contract.last_trading_day.present? ? " expiry: #{@contract.last_trading_day}" : ''] if @contract.is_a?(IB::Future) || @contract.is_a?(IB::Option)
+					input_row['exchange', @contract &.contract_detail.present? ? @contract &.contract_detail.long_name : @contract&.to_human]
+					input_row['symbol',  " market price : #{@contract &.market_price}  (delayed)" ]
+					input_row['currency', @contract &.con_id.to_s.to_i >0  ? " con-id : #{@contract &.con_id}" : '' ]
+					input_row['expiry', @contract &.last_trading_day.present? ? " expiry: #{@contract &.last_trading_day}" : ''] if @contract.is_a?(IB::Future) || @contract.is_a?(IB::Option)
 					input_row['right',   @contract.right ] if @contract.is_a?(IB::Option)  
 					input_row['strike',  @contract.strike ] if @contract.is_a?(IB::Option)  
-					input_row['multiplier', @contract.multiplier.to_i >0  ? @contract.multiplier : '']
+					input_row['multiplier', @contract &.multiplier.to_i >0  ? @contract &.multiplier : '']
 
 					tr do
 						td "Type"
 						td do
 							select( name: 'sec_type', size:1 ) do
 								IB::Contract::Subclasses.each do |x,y| 
-									@contract.sec_type == x.to_sym ? option( selected: 'selected' ){ x } :  option( x ) 
+									@contract &.sec_type == x.to_sym ? option( selected: 'selected' ){ x } :  option( x ) 
 								end  # each
 							end		 # select
 						end			 # td
-						td { input :type => 'submit', :class => 'submit', :value => 'Verify' } unless @contract.is_a?(Symbol) || @contract.con_id.to_s.to_i < 0
+						td { input :type => 'submit', :class => 'submit', :value => 'Verify' } unless @contract.is_a?(Symbol) || @contract &.con_id.to_s.to_i < 0
 					end  # tr
 				end	  # table
 			end #form
 		else
-			table{ tr { td @contract.to_human[1..-2] } } 
+			table{ tr { td @contract &.to_human[1..-2] } } 
 		end # if-branch
-		_order_mask if @contract.description.present? || @contract.con_id.to_s.to_i != 0 
+		_order_mask if @contract &.description.present? || @contract &.con_id.to_s.to_i != 0 
 	end # contract_mask
 
 

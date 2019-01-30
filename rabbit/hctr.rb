@@ -61,21 +61,18 @@ class  HCTR
 					end
 			end
 	end
+
+
 	def return_calculated_position order, contract, focus
 		contract_size = ->(a,c) do			# note: portfolio_value.position is either positiv or negativ
+																		# note: nil.to_i ---> 0
 			if c.con_id <0 # Spread
-				p = a.portfolio_values.detect{|p| p.contract.con_id ==c.legs.first.con_id}
-			  if p.nil?
-					0
-				else 
-				p.position.to_i / c.combo_legs.first.weight  rescue 0  # rescue: if p.zero?
-				end
+				p = a.portfolio_values.detect{|p| p.contract.con_id ==c.legs.first.con_id} &.position.to_i
+				p / c.combo_legs.first.weight  unless p.zero?
 			else
-				a.portfolio_values.detect{|x| x.contract.con_id == c.con_id} || 0
+				a.portfolio_values.detect{|x| x.contract.con_id == c.con_id} &.position.to_i
 			end
 		end
-
-
 		IB::Gateway.current.active_accounts.each do | account |
 					c =  nil; contract.verify{| y | c =  y }
 					actual_size =  contract_size[account,c]
@@ -88,36 +85,57 @@ class  HCTR
 					@response_exchange.publish( {account.account => { contract: contract.serialize_rabbit, size: the_size }}.to_json , routing_key: 'preview' )
 		end
 	end
+
+
+
 	def place_the_order order, contract, focus
 		
 		c =  nil; contract.verify{| y| c =  y }
-		IB::Gateway.current.active_accounts.each do | account |
-				ref_order = account.orders.detect{|x| x.contract.con_id == c.con_id && x.status =~ /ubmitted/}
-				if ref_order.present?
-					modify_the_order order, c
-				else
-					working_order =  IB::Order.duplicate order
-					rc= Client.new(account)
-					working_order.total_quantity = rc.calculate_position( order, c, focus)
 
-					ref_position = account.portfolio_values.detect do |pv| 
-						 c.is_a?(IB::Spread) ?  pv.contract.con_id == c.legs.first.con_id : pv.contract.con_id == c.con_id 
-					end
-				puts "Found existing position: #{ref_position.to_human}"	  if ref_position.present?
-					unless working_order.total_quantity.zero? || ref_position.present?
-					  working_order.contract =  c    # do not verify further
-						account.place order: working_order
-						logger.info{ "#{account.alias} -> Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{c.to_human}" }
-					end
+		IB::Gateway.current.active_accounts.each do | account |
+			r = ->(l){ account.locate_order local_id: l, status: nil }
+			ref_order = account.locate_order con_id: c.con_id 
+			if ref_order.present?
+				modify_the_order order, c
+			else
+				working_order =  IB::Order.duplicate order
+				rc= Client.new(account)
+				working_order.total_quantity = rc.calculate_position( order, c, focus)
+
+				ref_position = account.portfolio_values.detect do |pv| 
+					c.is_a?(IB::Spread) ?  pv.contract.con_id == c.legs.first.con_id : pv.contract.con_id == c.con_id 
 				end
-		end
-	end
+				logger.warn {"Found existing position: #{ref_position.to_human}"	}  if ref_position.present?
+				unless working_order.total_quantity.zero? || ref_position.present?
+					working_order.contract =  c    # do not verify further
+					the_local_id = account.place order: working_order
+					begin
+						Timeout::timeout(1){ loop{  sleep 0.1;  break if  r[the_local_id] } }
+						if r[the_local_id].status =~ /ject/ 
+							@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+																											message: "order rejected" }}.to_json , 
+																											routing_key: 'place' )
+						else
+							logger.info{ "#{account.alias} -> Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{c.to_human}" }
+						end
+					rescue Timeout::Error
+						@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+																										 message: "cannot find order " }}.to_json , 
+																										 routing_key: 'place' )
+					end
+
+				end # unless
+			end   # branch
+		end				# each
+	end					# def
 
 	def cancel_the_order  contract
 		IB::Gateway.current.update_orders
+		con_id = 0 ; contract.verify{|c| con_id =  c.con_id}
 		IB::Gateway.current.active_accounts.each do | account |
-				IB::Gateway.current.cancel_order *account.orders.find_all{|x| x.contract.symbol == contract.symbol && x.status =~ /ubmitted/}
-			end
+				order_to_cancel = account.locate_order con_id: contract.con_id 
+				IB::Gateway.current.cancel_order order_to_cancel
+			end unless con_id.to_i.zero?
 	 end
 
 
@@ -128,7 +146,7 @@ class  HCTR
 		IB::Gateway.current.active_accounts.each do | account |
 				working_order =  IB::Order.duplicate order
 				working_order.local_id = nil ## reset  local_id
-				ref_order = account.orders.detect{|x| x.contract.con_id == c.con_id && x.status =~ /ubmitted/}
+				ref_order = account.locate_order con_id: c.con_id
 				if ref_order.present?
 					order.contract =  c
 					working_order.local_id  = ref_order.local_id
