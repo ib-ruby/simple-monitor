@@ -287,7 +287,7 @@ module Ibo::Controllers
 				else
 					update_next_order_id
 					gw.logger.info { "Placing Order on #{contract.to_human}" }
-					account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: truea
+					account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: true
 				end
 			end
 			i=0; loop{ break if read_order_status >  count_of_order_state_messages || i> 30; sleep 0.2; i=i+1 }
