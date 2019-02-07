@@ -28,20 +28,30 @@ class Client
 		end
 	end
 
+
+	#   topic =  :Trend
+	# 	the_client.change_default( topic ){ |x| x[:ZN] = 3 ; x}    <== add or change an item
+	# 	or
+	# 	content = {:Ratio=>0.3, :J36=>0, :GE=>0, :NEU=>10, :ZN=>3}
+	# 	the_client.change_default( topic ){  content }     == overwrite   
 	def change_default topic
 		modified_defaults = yield read_defaults[:Anlageschwerpunkte][topic.to_sym]
 		the_new_defaults =  read_defaults 
+		puts "moduified defaults #{modified_defaults}"
 		the_new_defaults[ :Anlageschwerpunkte][topic.to_sym] = modified_defaults
 		filename.open( 'w' ){|f| f.write the_new_defaults.to_yaml}
 	end
-	def categories
 
-					 	 { IB::Option =>  :Optionsstrategie,
-							 IB::Future =>  :Future,
-							 IB::FutureOption => :Optionsstrategie,
-						   IB::Spread => :Optionsstrategie }
+	def remove_symbol topic, symbol
+		the_new_defaults =  read_defaults 
+		the_new_defaults[:Anlageschwerpunkte][topic.to_sym] &.delete symbol.to_sym
+		filename.open( 'w' ){|f| f.write the_new_defaults.to_yaml}
 	end
 
+
+	def category
+		read_defaults[:Kategorie] &.upcase || "100K"
+	end
 	def make_default
 		y = { Konto:{ ID: @account.account, alias: @account.alias },
 				Absicht: 'langfristiger Kapitalaufbau',
@@ -64,8 +74,14 @@ class Client
 		filename.open( 'w' ){|f| f.write y.to_yaml}
 	end
 
-	def size contract # dev.
-			read_defaults( :Anlageschwerpunkte )[contract.misc.to_sym][contract.symbol.to_sym] || 0
+	# returns a hash with sizes
+	#  size(:Ratio) 
+	#  --> => {:BuyAndHold=>0.6, :Trend=>0.3, :Hedge=>0.1, :Currency=>0.5, :Stillhalter=>0.4, :Spreads=>0.4, :Bond=>0.7}
+	#  size 'GE'
+	#   => {:Trend=>0} 
+	def size symbol
+		s = 	read_defaults( :Anlageschwerpunkte )
+		s.map{|y,x| [y , x[symbol.to_sym] ] if x[symbol.to_sym].present?}.compact.to_h
 	end
 
 	def calculate_position order,contract, focus 	#  returns the calculated position size
@@ -78,10 +94,11 @@ class Client
 		if size == -1 
 			#  automatic determination
 			ratio= read_defaults( :Anlageschwerpunkte )[focus.to_sym][:Ratio]
-			return(0) if ratio.nil?
+			return(0) if ratio.nil? || ratio.zero?  # ratio 0 --> only discret amounts allowed
 
-			max_capital = round_capital[ @account.net_liquidation * ratio ]
-			max_capital = order.total_quantity.to_f.zero? ? max_capital : order.total_quantity.to_f * max_capital
+			max_capital = round_capital[ @account.net_liquidation * ratio.abs ]
+			max_capital = (order.total_quantity.to_f.zero? ? max_capital : max_capital / order.total_quantity.to_f  ) 
+			max_capital =  max_capital / contract.multiplier unless contract.multiplier.to_i.zero?
 			price =  order.limit_price.presence ||  order.aux_price
 			min_size =  if price < 5
 										1000

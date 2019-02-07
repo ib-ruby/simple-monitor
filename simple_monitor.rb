@@ -281,9 +281,14 @@ module Ibo::Controllers
 			count_of_order_state_messages = read_order_status
 			gw.for_selected_account(account_id) do |account|
 				contract= locate_contract con_id, account
-				update_next_order_id
-				gw.logger.info { "Placing Order on #{contract.to_human}" }
-				account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: true
+				contract = gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }  unless contract.is_a?(IB::Contract)
+				unless contract.is_a?(IB::Contract)
+					render "Placing failed. Contract not evaluated: con_id:  #{con_id}"
+				else
+					update_next_order_id
+					gw.logger.info { "Placing Order on #{contract.to_human}" }
+					account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: truea
+				end
 			end
 			i=0; loop{ break if read_order_status >  count_of_order_state_messages || i> 30; sleep 0.2; i=i+1 }
 			gw.update_orders

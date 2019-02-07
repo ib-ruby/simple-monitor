@@ -28,6 +28,7 @@ class  HCTR
 		@connection.start
 		channel =  @connection.create_channel
 		@response_exchange = channel.direct("response") 
+		order_subscription
 		@error_exchange = channel.direct("error") 
 		create_queue = -> { c= @connection.create_channel; c.queue('', exclusive: true) }
 		@queues = watchlists.map do |ch|
@@ -45,6 +46,14 @@ class  HCTR
 		@queues << [ "common",  create_queue[].bind('common')]
 	  self #  make it chainable
 	end
+	def order_subscription # notify rabbit_console about any order
+		IB::Gateway.current.tws.subscribe :OpenOrder do | msg |
+					# make open order equal to IB::Spreads (include negativ con_id)
+					msg.contract[:con_id] = -msg.contract.combo_legs.map{|y| y.con_id}.sum  if msg.contract.is_a? IB::Bag
+					@response_exchange.publish( {msg.order.account =>  msg.order.serialize_rabbit}.to_json,
+																															routing_key: 'open_order' )
+				end
+		end
 	
 	def pending_orders
 		IB::Gateway.current.update_orders				 # read pending_orders
@@ -52,13 +61,14 @@ class  HCTR
 		IB::Gateway.current.active_accounts.map( &:orders ).flatten.compact
 	end
 
-	def change_default_value_for watchlist, contract, size
+	def change_default_value_for watchlist, category, contract, size
 		IB::Gateway.current.active_accounts.each do | account |
 					rc= Client.new(account)
+					puts "testing #{account.account} --> #{rc.category == category} "
 					rc.change_default(watchlist.name.split(':').last) do | current |
 						current[contract.symbol.to_sym] = size 
-						current
-					end
+						current  # return_value
+					end if rc.category == category
 			end
 	end
 
@@ -74,40 +84,43 @@ class  HCTR
 			end
 		end
 		IB::Gateway.current.active_accounts.each do | account |
-					c =  nil; contract.verify{| y | c =  y }
-					actual_size =  contract_size[account,c]
+					actual_size =  contract_size[account,contract]
 					if actual_size.zero?
 						rc= Client.new(account)
-						the_size = rc.calculate_position order, c, focus
+						the_size = rc.calculate_position order, contract, focus
 					else
 						the_size =  -(actual_size.abs)
 					end
-					@response_exchange.publish( {account.account => { contract: contract.serialize_rabbit, size: the_size }}.to_json , routing_key: 'preview' )
+					@response_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+																														size: the_size }}.to_json , 
+																		   routing_key: 'preview' )
 		end
 	end
 
 
 
 	def place_the_order order, contract, focus
-		
-		c =  nil; contract.verify{| y| c =  y }
 
 		IB::Gateway.current.active_accounts.each do | account |
 			r = ->(l){ account.locate_order local_id: l, status: nil }
-			ref_order = account.locate_order con_id: c.con_id 
+			ref_order = account.locate_order con_id: contract.con_id 
 			if ref_order.present?
-				modify_the_order order, c
+				modify_the_order order, contract
 			else
 				working_order =  IB::Order.duplicate order
 				rc= Client.new(account)
-				working_order.total_quantity = rc.calculate_position( order, c, focus)
-
+				working_order.total_quantity = rc.calculate_position( order, contract, focus)
+				puts "calculated quantity: #{working_order.total_quantity}"
 				ref_position = account.portfolio_values.detect do |pv| 
-					c.is_a?(IB::Spread) ?  pv.contract.con_id == c.legs.first.con_id : pv.contract.con_id == c.con_id 
+					contract.is_a?(IB::Spread) ?  pv.contract.con_id == contract.legs.first.con_id : pv.contract.con_id == contract.con_id 
 				end
-				logger.warn {"Found existing position: #{ref_position.to_human}"	}  if ref_position.present?
-				unless working_order.total_quantity.zero? || ref_position.present?
-					working_order.contract =  c    # do not verify further
+				if ref_position.present?
+				logger.warn {"Found existing position: #{ref_position.to_human}"	} 
+				@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+																									 message: "NOT PLACED, Detected exsting Position" }}.to_json , 
+																									 routing_key: 'place' )
+				elsif !working_order.total_quantity.zero? 
+					working_order.contract =  contract    # do not verify further
 					the_local_id = account.place order: working_order
 					begin
 						Timeout::timeout(1){ loop{  sleep 0.1;  break if  r[the_local_id] } }
@@ -116,11 +129,14 @@ class  HCTR
 																											message: "order rejected" }}.to_json , 
 																											routing_key: 'place' )
 						else
-							logger.info{ "#{account.alias} -> Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{c.to_human}" }
+							logger.info{ "#{account.alias} -> Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{contract.to_human}" }
+				@response_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+																									 message: "Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{contract.to_human}" }}.to_json , 
+																									 routing_key: 'place' )
 						end
 					rescue Timeout::Error
 						@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
-																										 message: "cannot find order " }}.to_json , 
+																										 message: "submitted order not returned by tws" }}.to_json , 
 																										 routing_key: 'place' )
 					end
 
@@ -131,24 +147,22 @@ class  HCTR
 
 	def cancel_the_order  contract
 		IB::Gateway.current.update_orders
-		con_id = 0 ; contract.verify{|c| con_id =  c.con_id}
 		IB::Gateway.current.active_accounts.each do | account |
 				order_to_cancel = account.locate_order con_id: contract.con_id 
-				IB::Gateway.current.cancel_order order_to_cancel
-			end unless con_id.to_i.zero?
+				IB::Gateway.current.cancel_order order_to_cancel if order_to_cancel.is_a? IB::Order
+			end 
 	 end
 
 
 
 	def modify_the_order order, contract
 		IB::Gateway.current.update_orders
-		c=  nil; contract.verify { |y| c=  y } 
 		IB::Gateway.current.active_accounts.each do | account |
 				working_order =  IB::Order.duplicate order
 				working_order.local_id = nil ## reset  local_id
-				ref_order = account.locate_order con_id: c.con_id
+				ref_order = account.locate_order con_id: contract.con_id
 				if ref_order.present?
-					order.contract =  c
+					order.contract =  contract
 					working_order.local_id  = ref_order.local_id
 					working_order.total_quantity = if order.total_quantity.zero?  # no change
 																		ref_order.total_quantity
@@ -167,6 +181,25 @@ class  HCTR
 		end
 	end
 
+	def return_contract_if_possible watchlist, symbol
+		begin
+			c =  watchlist.send symbol
+		rescue IB::SymbolError
+			@error_exchange.publish( {gw.advisor.account => "Contract #{sym} not found in watchlist #{watchlist.name}"}.to_json , routing_key: 'contract' )
+		else
+			@response_exchange.publish({gw.advisor => { contract: c} }.to_json, routing_key: 'contract') 
+			IB::Gateway.current.active_accounts.each do | account |
+				position = account.portfolio_values.find{|p| p.contract.con_id == c.verify!.con_id}
+				if position
+			@response_exchange.publish( {account.account => {:portfolio_value => position ,
+																											 :contract => c.serialize_rabbit}}.to_json , routing_key: 'single_position' )
+				else 
+					puts "no position"
+				end
+			end
+
+		end
+	end
 	def close_the_contract order, contract
 		IB::Gateway.current.active_accounts.each do | account |
 			 account.close order: IB::Order.duplicate(order), contract: contract
@@ -183,7 +216,7 @@ class  HCTR
 	def check_the_connection
 			unless  gw.check_connection   # ensure that the connection is operative 
 				logger.error  {"No Connection to TWS-Server"}
-				@error_exchange.publish( {gw.advisor.account => "No Commection to TWS"}.to_json , routing_key: 'connection' )
+				@error_exchange.publish( {gw.advisor.account => "No Connection to TWS"}.to_json , routing_key: 'connection' )
 				nil
 			else
 				true
@@ -200,16 +233,24 @@ class  HCTR
 
 			logger.info { "subscribing #{watchlist.inspect}" }
 			queue.subscribe do |delivery_info, metadata, payload|
-				# puts "Received #{JSON.parse(payload).inspect}"
+#			puts "Received #{JSON.parse(payload).inspect}"
 				message = JSON.parse( payload )
 				kind =  message.to_a.shift.shift
 				case kind
 
 				when "add_contract"
-					key, message = message[kind].to_a
-					contract = gw.build_from_json(message)
+					message = message[kind]
+					key =  message.shift
+					contract = gw.build_from_json(message.shift)
 					watchlist.add_contract key.to_sym, contract
 					logger.info{ "added  #{key}: #{contract.to_human} to watchlist #{watchlist.name.split(':').last}"}
+
+				when "read_default"
+					symbol = message[kind]
+					IB::Gateway.current.active_accounts.each do | account |
+						rc =  Client.new(account)
+						@response_exchange.publish({ account.account => [ symbol => rc.size(symbol)]}.to_json, routing_key: kind ) 
+					end
 
 				when "restart"
 					logger.error { "restart detected but not handled jet" } 
@@ -224,10 +265,9 @@ class  HCTR
 						gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind ) }
 					end
 				when /pending/
-					pending_orders.each do |account|
-						puts "pending order for #{account.alias}"
-						@response_exchange.publish( { account: account.account, 
-																		order:  account.serialize_rabbit}.to_json,
+					pending_orders.each do | o |
+						@response_exchange.publish( { account: o.account, 
+																		order:  o.serialize_rabbit}.to_json,
 																		routing_key: kind )
 					end
 				when 'account-data', 'positions'
@@ -245,24 +285,37 @@ class  HCTR
 						end
 					end
 				else  #  contract related signals
-					watchlist_symbol = message[kind].is_a?(Array) ?  message[kind].shift : message[kind]
+					contract_specification = message[kind].is_a?(Array) ?  message[kind].shift : message[kind]
+					watchlist.read_collection  if watchlist.is_a?(Module)
 					begin
-						contract = watchlist[watchlist_symbol.to_sym]
+						contract = if contract_specification =~ /^[0-9]+$/
+												 gw.all_contracts.detect{|x| x.con_id == contract_specification.to_i}
+											 else		
+												 watchlist_symbol = contract_specification.to_sym
+												 watchlist[watchlist_symbol] &.verify! &.essential  # early verification
+											 end
+					rescue NoMethodError =>e
+						logger.error{ "Wrong message #{watchlist_symbol}, #{message.inspect}" }
 					rescue IB::SymbolError => e
 						logger.error {"Contract #{watchlist_symbol} not defined in #{watchlist.name}"}
 						@error_exchange.publish( {gw.advisor.account => "Contract not defined", 
 																watchlist: watchlist.name,
 																symbol: watchlist_symbol}.to_json , routing_key: 'contract' )
 					else
+					puts "kind #{kind}"
 						case kind
 						when 'cancel'
 							cancel_the_order contract
-						when "change_default" 
-							size = message[kind].shift.to_i
-							change_default_value_for watchlist, watchlist_symbol.to_sym, size
+						when "change_default", "set_default" 
+							puts "Message #{message}"
+							category_and_size = message[kind].shift
+							#												watchlist (Module)   Kategorie            IB::Contract   Size
+							change_default_value_for watchlist, category_and_size.keys.first, contract, category_and_size.values.last
 						when "remove_contract"
 							logger.debug{ "symbol to be removed: #{watchlist_symbol}"}
-							watchlist.remove_contract watchlist_symbol.to_sym
+							watchlist.remove_contract watchlist_symbol
+						when "contract?" 
+							return_contract_if_possible watchlist, watchlist_symbol
 						when 'place', 'modify', 'reverse', 'close', 'preview'
 							raw_order = message[kind].shift
 							focus =  watchlist.name.split(':').last
@@ -277,6 +330,7 @@ class  HCTR
 							when 'close'
 								close_the_contract order, contract
 							when 'preview'
+								puts "preview"
 								return_calculated_position order, contract, focus
 							end
 						else
