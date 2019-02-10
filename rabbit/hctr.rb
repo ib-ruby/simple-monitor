@@ -148,13 +148,26 @@ class  HCTR
 	def cancel_the_order  contract
 		IB::Gateway.current.update_orders
 		IB::Gateway.current.active_accounts.each do | account |
-				order_to_cancel = account.locate_order con_id: contract.con_id 
-				IB::Gateway.current.cancel_order order_to_cancel if order_to_cancel.is_a? IB::Order
-			end 
-	 end
+			order_to_cancel = account.locate_order con_id: contract.con_id 
+			if order_to_cancel.is_a? IB::Order
+				begin
+					Timeout::timeout(3) do
+						IB::Gateway.current.cancel_order order_to_cancel 
+						loop  { sleep 0.1; break if !!(account.locate_order( local_id: order_to_cancel.local_id , status: /Cancel/))  }
+					end
 
+					@response_exchange.publish( {account.account => account.locate_order( 
+																												 local_id: order_to_cancel.local_id , 
+																												 status: /Cancel/).serialize_rabbit}.to_json , 
+																		 routing_key: 'cancel-order' )
+				 
+				rescue Timeout::Error
 
-
+					@error_exchange.publish( {account.account => "Cancelling of Order Local_id: #{order_to_cancel.local_id}  (Symbol: #{contract.symbol}) went possibly wrong."}.to_json , routing_key: 'cancel-order' )
+				end
+			end
+		end
+	end
 	def modify_the_order order, contract
 		IB::Gateway.current.update_orders
 		IB::Gateway.current.active_accounts.each do | account |
