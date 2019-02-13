@@ -112,10 +112,10 @@ class  HCTR
 				working_order.total_quantity = rc.calculate_position( order, contract, focus)
 				puts "calculated quantity: #{working_order.total_quantity}"
 				ref_position = account.portfolio_values.detect do |pv| 
-					contract.is_a?(IB::Spread) ?  pv.contract.con_id == contract.legs.first.con_id : pv.contract.con_id == contract.con_id 
+					(contract.is_a?(IB::Spread) ?  pv.contract.con_id == contract.legs.first.con_id : pv.contract.con_id == contract.con_id ) && !pv.position.to_i.zero?
 				end
 				if ref_position.present?
-				logger.warn {"Found existing position: #{ref_position.to_human}"	} 
+				logger.error {"Found existing position: #{ref_position.to_human}"	} 
 				@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
 																									 message: "NOT PLACED, Detected exsting Position" }}.to_json , 
 																									 routing_key: 'place' )

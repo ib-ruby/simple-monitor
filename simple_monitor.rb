@@ -304,7 +304,8 @@ module Ibo::Controllers
    STYLE = File.read(__FILE__).gsub(/.*__END__/m, '')
    def get
      @headers['Content-Type'] = 'text/css; charset=utf-8'
-#		 @headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+		 @headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+		 @headers["Pragma"] = "no-cache"
      STYLE
    end
  end
