@@ -16,36 +16,34 @@ class Client
 		dir = Pathname.new File.expand_path("../../clients", __FILE__ ) 
 		dir + "#{@account.account}.yml"
 	end
-	def read_defaults key= :all  # access to yaml-config-file is not cached. Changes
-		# take effect immediately after saving the yaml-dataset
+	def read_defaults key= :all  # access to yaml-config-file is cached. 
 		# a block has access to the raw-structure
-		make_default unless  File.exists?(filename) 
-		structure = YAML.load_file(filename) 
-		if block_given? && !!structure
-			yield structure
+		make_default if  @yaml.nil? &&  !File.exists?(filename) 
+		@yaml ||= YAML.load_file(filename) 
+		if block_given?
+			yield 	key.to_sym  == :all ? @yaml : @yaml[key.to_sym]
 		else
-		key.to_sym  == :all ? structure  : structure[key.to_sym]
+			key.to_sym  == :all ? @yaml.dup  : @yaml[key.to_sym].dup
 		end
 	end
 
 
 	#   topic =  :Trend
-	# 	the_client.change_default( topic ){ |x| x[:ZN] = 3 ; x}    <== add or change an item
+	# 	the_client.change_default( topic ){ {:ZN => 3 }}    <== add or change an item
 	# 	or
 	# 	content = {:Ratio=>0.3, :J36=>0, :GE=>0, :NEU=>10, :ZN=>3}
 	# 	the_client.change_default( topic ){  content }     == overwrite   
 	def change_default topic
-		modified_defaults = yield read_defaults[:Anlageschwerpunkte][topic.to_sym]
-		the_new_defaults =  read_defaults 
-		puts "moduified defaults #{modified_defaults}"
-		the_new_defaults[ :Anlageschwerpunkte][topic.to_sym] = modified_defaults
-		filename.open( 'w' ){|f| f.write the_new_defaults.to_yaml}
+		unmodified_defaults =  read_defaults[:Anlageschwerpunkte][topic.to_sym]
+		@yaml[ :Anlageschwerpunkte ][ topic.to_sym ].merge! yield( unmodified_defaults )
+		filename.open( 'w' ){|f| f.write @yaml.to_yaml}
+		@yaml[ :Anlageschwerpunkte ][ topic.to_sym ]	 #  return complete topic
 	end
 
 	def remove_symbol topic, symbol
-		the_new_defaults =  read_defaults 
-		the_new_defaults[:Anlageschwerpunkte][topic.to_sym] &.delete symbol.to_sym
-		filename.open( 'w' ){|f| f.write the_new_defaults.to_yaml}
+		read_defaults if @yaml.nil?
+		@yaml[:Anlageschwerpunkte][topic.to_sym] &.delete symbol.to_sym
+		filename.open( 'w' ){|f| f.write @yaml.to_yaml}
 	end
 
 
@@ -80,8 +78,9 @@ class Client
 	#  size 'GE'
 	#   => {:Trend=>0} 
 	def size symbol
-		s = 	read_defaults( :Anlageschwerpunkte )
-		s.map{|y,x| [y , x[symbol.to_sym] ] if x[symbol.to_sym].present?}.compact.to_h
+		read_defaults( :Anlageschwerpunkte ) do | y |
+			y.map{|y,x| [y , x[symbol.to_sym] ] if x[symbol.to_sym].present?}.compact.to_h
+		end
 	end
 
 	def calculate_position order,contract, focus 	#  returns the calculated position size
@@ -93,20 +92,17 @@ class Client
 		
 		if size == -1 
 			#  automatic determination
-			ratio= read_defaults( :Anlageschwerpunkte )[focus.to_sym][:Ratio]
+			ratio= size(:Ratio)[focus.to_sym]
 			return(0) if ratio.nil? || ratio.zero?  # ratio 0 --> only discret amounts allowed
-
-			max_capital = round_capital[ @account.net_liquidation * ratio.abs ]
-			max_capital = (order.total_quantity.to_f.zero? ? max_capital : max_capital / order.total_quantity.to_f  ) 
+			quantity =   order.total_quantity.to_f.zero? ? 1 : order.total_quantity
+			max_capital = round_capital[ @account.net_liquidation * ratio * quantity]
 			max_capital =  max_capital / contract.multiplier unless contract.multiplier.to_i.zero?
 			price =  order.limit_price.presence ||  order.aux_price
 			min_size =  if price < 5
 										1000
-									elsif price < 10
-										500
 									elsif price < 50
 										100
-									elsif price < 85
+									elsif price < 100
 										50
 									elsif price < 300
 										10

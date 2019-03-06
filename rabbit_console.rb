@@ -48,7 +48,7 @@ end # Array
  
   include IB
   require 'irb'
-	d_host, d_client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] } # client_id 0 gets any open order
+	d_host, d_client_id = read_tws_alias{|s| [ s[:host] || 'localhost', s[:client_id].to_i ] } # client_id 0 gets any open order
   client_id =  d_client_id.zero? ? 0 : d_client_id-1
   ARGV.clear
   logger = Logger.new  STDOUT
@@ -56,22 +56,23 @@ end # Array
       "#{time.strftime('%H:%M:%S')} #{msg}\n"
 	end
 	logger.level = Logger::INFO 
-		set_alias = ->(account) do 
-			yaml_alias = read_tws_alias{ |s| s[:user][account.account]} 
-			account.alias = yaml_alias if yaml_alias.present? && !yaml_alias.empty?
-		end
+
+	set_alias = ->(account) do 
+		yaml_alias = read_tws_alias{ |s| s[:user][account.account]} 
+		account.update_attribute :alias , yaml_alias if  yaml_alias.present?
+	end
  begin
 
 		G =  Gateway.new  get_account_data: false, serial_array: true,
 			client_id: client_id, host: d_host, logger: logger
 
 		excluded_accounts = read_tws_alias(:exclude)
-		excluded_accounts.keys.each{| a | G.for_selected_account(a.to_s){ |x| x.disconnect! }}	if excluded_accounts.present?
+		excluded_accounts &.keys &.each{| a | G.for_selected_account(a.to_s){ |x| x.disconnect! }}		
 		set_alias[G.advisor]
 		G.active_accounts.each { |a| set_alias[a]} 
 
-		a = G.active_accounts.map{|x| Client.new x}
-		watchlists = a.map{|b| b.read_defaults[:Anlageschwerpunkte].keys}.flatten.uniq
+		clients = G.active_accounts.map{|x| Client.new x}
+		watchlists = clients.map{|b| b.read_defaults[:Anlageschwerpunkte].keys}.flatten.uniq
 		G.get_account_data    watchlists: watchlists.map{|y| Symbols.allocate_collection y.to_sym}
 
 	rescue IB::TransmissionError => e

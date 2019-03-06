@@ -46,6 +46,10 @@ class  HCTR
 		@queues << [ "common",  create_queue[].bind('common')]
 	  self #  make it chainable
 	end
+
+
+
+
 	def order_subscription # notify rabbit_console about any order
 		IB::Gateway.current.tws.subscribe :OpenOrder do | msg |
 					# make open order equal to IB::Spreads (include negativ con_id)
@@ -60,18 +64,6 @@ class  HCTR
 		sleep 1
 		IB::Gateway.current.active_accounts.map( &:orders ).flatten.compact
 	end
-
-	def change_default_value_for watchlist, category, contract, size
-		IB::Gateway.current.active_accounts.each do | account |
-					rc= Client.new(account)
-					puts "testing #{account.account} --> #{rc.category == category} "
-					rc.change_default(watchlist.name.split(':').last) do | current |
-						current[contract.symbol.to_sym] = size 
-						current  # return_value
-					end if rc.category == category
-			end
-	end
-
 
 	def return_calculated_position order, contract, focus
 		contract_size = ->(a,c) do			# note: portfolio_value.position is either positiv or negativ
@@ -100,7 +92,7 @@ class  HCTR
 
 
 	def place_the_order order, contract, focus
-
+		IB::Gateway.current.tws.update_next_order_id
 		IB::Gateway.current.active_accounts.each do | account |
 			r = ->(l){ account.locate_order local_id: l, status: nil }
 			ref_order = account.locate_order con_id: contract.con_id 
@@ -115,7 +107,7 @@ class  HCTR
 					(contract.is_a?(IB::Spread) ?  pv.contract.con_id == contract.legs.first.con_id : pv.contract.con_id == contract.con_id ) && !pv.position.to_i.zero?
 				end
 				if ref_position.present?
-				logger.error {"Found existing position: #{ref_position.to_human}"	} 
+				logger.error {"#{account.alias} -> Found existing position: #{ref_position.to_human}"	} 
 				@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
 																									 message: "NOT PLACED, Detected exsting Position" }}.to_json , 
 																									 routing_key: 'place' )
@@ -125,12 +117,12 @@ class  HCTR
 					begin
 						Timeout::timeout(1){ loop{  sleep 0.1;  break if  r[the_local_id] } }
 						if r[the_local_id].status =~ /ject/ 
-							@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+							@error_exchange.publish( {account.account => { contract: working_order.contract.serialize_rabbit, 
 																											message: "order rejected" }}.to_json , 
 																											routing_key: 'place' )
 						else
 							logger.info{ "#{account.alias} -> Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{contract.to_human}" }
-				@response_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+				@response_exchange.publish( {account.account => { contract: working_order.contract.serialize_rabbit, 
 																									 message: "Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{contract.to_human}" }}.to_json , 
 																									 routing_key: 'place' )
 						end
@@ -243,10 +235,10 @@ class  HCTR
 			"#{time.strftime('%H:%M:%S')} #{msg}\n"
 		end
 		@queues.each do |watchlist, queue|
-
+			watchlist_symbol =  watchlist.is_a?( Module) ?  watchlist.name.split(':').last.to_sym 	: :HC
 			logger.info { "subscribing #{watchlist.inspect}" }
 			queue.subscribe do |delivery_info, metadata, payload|
-#			puts "Received #{JSON.parse(payload).inspect}"
+#				puts "Received #{JSON.parse(payload).inspect}"
 				message = JSON.parse( payload )
 				kind =  message.to_a.shift.shift
 				case kind
@@ -256,22 +248,70 @@ class  HCTR
 					key =  message.shift
 					contract = gw.build_from_json(message.shift)
 					watchlist.add_contract key.to_sym, contract
-					logger.info{ "added  #{key}: #{contract.to_human} to watchlist #{watchlist.name.split(':').last}"}
+					logger.info{ "added  #{key}: #{contract.to_human} to watchlist #{watchlist_symbol}"}
 
 				when "read_default"
 					symbol = message[kind]
 					IB::Gateway.current.active_accounts.each do | account |
 						rc =  Client.new(account)
-						@response_exchange.publish({ account.account => [ symbol => rc.size(symbol)]}.to_json, routing_key: kind ) 
+						@response_exchange.publish( { account.account => 
+																			 [ symbol => rc.size(symbol)[watchlist_symbol] ] }.to_json, 
+																			routing_key: kind  )
 					end
+				when "change_default", "set_default" 
+							symbol = message[kind].shift.to_sym
+							category, size = message[kind].first.first
 
+							IB::Gateway.current.active_accounts.each do | account |
+								rc= Client.new(account)
+								if rc.category == category
+									changed_size = 	if size.is_a?(String) && ["*",'+','-'].include?(size[0])
+																		operation = size[0]
+																		the_size =  size[1..-1].to_f
+																		puts "ssymbol: #{symbol.inspect}"
+																		puts "w_symbol: #{watchlist_symbol}"
+																		org_size =  rc.size(symbol)[watchlist_symbol]
+																		puts "orginial size: #{org_size}"
+																		case operation
+																		when "*"
+																			org_size * the_size
+																		when '+'
+																			org_size + the_size
+																		when '-' 
+																			org_size - the_size
+																		end
+																	else
+																		size.to_i
+																	end.round
+																	puts "changed_size: #{changed_size}"
+									topic = rc.change_default(watchlist_symbol) {{ symbol => changed_size }} 
+
+									@response_exchange.publish( {account.account => 
+																			{ "#{category}/#{watchlist_symbol}" => topic}}.to_json,
+																						 routing_key: 'change-default' )
+								end
+							end
+
+				when "remove_symbol"   # R.{Watchlist} :remove_symbol, kategory, symbol
+					symbol, category = message[kind]
+					IB::Gateway.current.active_accounts.each do | account |
+						rc= Client.new(account)
+						if rc.category == category
+							rc.remove_symbol watchlist_symbol, symbol  
+							@response_exchange.publish( {account.account => 
+																		{ "#{category}/#{watchlist_symbol}" => rc.read_defaults( :Anlageschwerpunkte)[ watchlist_symbol]}}.to_json,
+
+																				routing_key: 'change-default' )
+					end
+			end
 				when "restart"
 					logger.error { "restart detected but not handled jet" } 
-					@error_exchange.publish( {gw.advisor.account => "Restart not implemented"}.to_json , routing_key: kind )
+					@error_exchange.publish( {gw.advisor.account => "Restart not implemented"}.to_json,
+																	routing_key: kind )
 				when 'reset'
 					watchlist.purge_collection
 					logger.debug{ "Collection purged" }
-					IB::Symbols.allocate_collection watchlist.name.split(":").last  # extract name from class
+					IB::Symbols.allocate_collection watchlist_symbol
 				when "ping"
 					if check_the_connection
 						@response_exchange.publish(gw.advisor.to_json, routing_key: kind ) 
@@ -304,31 +344,25 @@ class  HCTR
 						contract = if contract_specification =~ /^[0-9]+$/
 												 gw.all_contracts.detect{|x| x.con_id == contract_specification.to_i}
 											 else		
-												 watchlist_symbol = contract_specification.to_sym
-												 watchlist[watchlist_symbol] &.verify! &.essential  # early verification
+												 the_symbol = contract_specification.to_sym
+												 watchlist[the_symbol] &.verify! &.essential  # early verification
 											 end
 					rescue NoMethodError =>e
-						logger.error{ "Wrong message #{watchlist_symbol}, #{message.inspect}" }
+						logger.error{ "Wrong message #{the_symbol}, #{message.inspect}" }
 					rescue IB::SymbolError => e
-						logger.error {"Contract #{watchlist_symbol} not defined in #{watchlist.name}"}
+						logger.error {"Contract #{the_symbol} not defined in #{watchlist.name}"}
 						@error_exchange.publish( {gw.advisor.account => "Contract not defined", 
 																watchlist: watchlist.name,
-																symbol: watchlist_symbol}.to_json , routing_key: 'contract' )
+																symbol: the_symbol}.to_json , routing_key: 'contract' )
 					else
-					puts "kind #{kind}"
 						case kind
 						when 'cancel'
 							cancel_the_order contract
-						when "change_default", "set_default" 
-							puts "Message #{message}"
-							category_and_size = message[kind].shift
-							#												watchlist (Module)   Kategorie            IB::Contract   Size
-							change_default_value_for watchlist, category_and_size.keys.first, contract, category_and_size.values.last
 						when "remove_contract"
-							logger.debug{ "symbol to be removed: #{watchlist_symbol}"}
+							logger.debug{ "symbol to be removed: #{the_symbol}"}
 							watchlist.remove_contract watchlist_symbol
 						when "contract?" 
-							return_contract_if_possible watchlist, watchlist_symbol
+							return_contract_if_possible watchlist, the_symbol
 						when 'place', 'modify', 'reverse', 'close', 'preview'
 							raw_order = message[kind].shift
 							focus =  watchlist.name.split(':').last
