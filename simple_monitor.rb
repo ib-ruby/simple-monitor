@@ -359,8 +359,8 @@ module Ibo::Views
 
 				@account.focuses.each do | watchlist, positions |
 					tr.exited do
-						td( colspan:2){ "Category  -->" }
-						td.number( colspan:6){ watchlist.to_human }
+						td( colspan:1){ "Category  -->" }
+						td.number( colspan:7){ watchlist.to_human }
 					end
 					tr do
 						positions.each do | contract, list_of_portfolio_values |
@@ -368,7 +368,7 @@ module Ibo::Views
 								_portfolio_position( list_of_portfolio_values.first )
 							else
 								_portfolio_position( contract.fake_portfolio_position( list_of_portfolio_values ) )
-								list_of_portfolio_values.each{|x| _portfolio_position(x) }
+								list_of_portfolio_values.each{|x| _portfolio_position(x, prefix: "-> ") }
 							end  #if
 						end		 # each	
 					end			 # tr	
@@ -517,7 +517,7 @@ module Ibo::Views
 		end
 	end
 	def _link_to_close_contract( contract, con_id , cols:2)
-			td(colspan:cols){ a  contract.to_human[1..-2], href: R(CloseContractXX  , @account.account, con_id.to_i ) }
+			td(colspan:cols){ a  yield(contract.to_human[1..-2]), href: R(CloseContractXX  , @account.account, con_id.to_i ) }
 	end
 
 	## order ##
@@ -614,10 +614,10 @@ module Ibo::Views
 		end
 	end 
 
-	def _portfolio_position(pp)
+	def _portfolio_position(pp, prefix:'')
 		the_multiplier = ->{ pp.contract.multiplier.nil? || pp.contract.multiplier.zero? ? 1: pp.contract.multiplier }
 		tr do
-			_link_to_close_contract( pp.contract, pp.contract.con_id, cols: pp.position.zero? ? 3 : 2)
+			_link_to_close_contract( pp.contract, pp.contract.con_id, cols: pp.position.zero? ? 3 : 2){ |x| prefix + x  }
 			td.number pp.position.to_i  unless pp.position.zero?
 			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.average_cost / the_multiplier[] )
 			td.number  ActiveSupport::NumberHelper.number_to_rounded( pp.market_price )
