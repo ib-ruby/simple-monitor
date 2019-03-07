@@ -54,20 +54,11 @@ module Ibo::Helpers
 			 end
 		(c.nil? ? watchlist_entry[] : c).verify!
 	end
+
   def	negative_position account, contract   # returns the negative position-size (if present) or ""
 			pending_order =  account.orders.detect{|o| o.contract == contract}  #  overread pending orders
 			the_p_position = account.portfolio_values.find{|p| p.contract == contract} unless !!pending_order
 			the_p_position.present? ? -the_p_position.position.to_i  : ""
-	end
-
-	def update_next_order_id
-		# the update itself is done in the subscription defined in  in  Gateway#Initialize
-		i,finish = 0, false
-		sub = gw.tws.subscribe(:NextValidID) { finish =  true }
-		gw.send_message :RequestIds
-		loop { sleep 0.1; break if finish || i >1000; i=i+1 }
-		error "Could not get NextValidId" , :reader if i > 1000
-		gw.tws.unsubscribe sub
 	end
 
 	def read_tws_alias key=nil, default=nil  # access to yaml-config-file is not cached. Changes
@@ -242,7 +233,7 @@ module Ibo::Controllers
 				contract =  gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
 				order_fields =  @input.reject{|x| x=='total_quantity'}   # all other input-fields
 				count_of_order_state = read_order_status
-				update_next_order_id
+				gw.tws.update_next_order_id
 				@input['total_quantity'].each do |x,y| 
 					gw.for_selected_account(x){|a| a.place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1}
 				end
@@ -285,7 +276,7 @@ module Ibo::Controllers
 				unless contract.is_a?(IB::Contract)
 					render "Placing failed. Contract not evaluated: con_id:  #{con_id}"
 				else
-					update_next_order_id
+					gw.tws.update_next_order_id
 					gw.logger.info { "Placing Order on #{contract.to_human}" }
 					account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: true
 				end
