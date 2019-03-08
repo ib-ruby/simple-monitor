@@ -96,6 +96,7 @@ class  HCTR
 		IB::Gateway.current.active_accounts.each do | account |
 			r = ->(l){ account.locate_order local_id: l, status: nil }
 			ref_order = account.locate_order con_id: contract.con_id 
+			serialized_contract= contract.serialize_rabbit
 			if ref_order.present?
 				modify_the_order order, contract
 			else
@@ -108,7 +109,7 @@ class  HCTR
 				end
 				if ref_position.present?
 				logger.error {"#{account.alias} -> Found existing position: #{ref_position.to_human}"	} 
-				@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+				@error_exchange.publish( {account.account => { contract: serialized_contract, 
 																									 message: "NOT PLACED, Detected exsting Position" }}.to_json , 
 																									 routing_key: 'place' )
 				elsif !working_order.total_quantity.zero? 
@@ -117,17 +118,17 @@ class  HCTR
 					begin
 						Timeout::timeout(1){ loop{  sleep 0.1;  break if  r[the_local_id] } }
 						if r[the_local_id].status =~ /ject/ 
-							@error_exchange.publish( {account.account => { contract: working_order.contract.serialize_rabbit, 
+							@error_exchange.publish( {account.account => { contract: serialized_.contract, 
 																											message: "order rejected" }}.to_json , 
 																											routing_key: 'place' )
 						else
 							logger.info{ "#{account.alias} -> Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{contract.to_human}" }
-				@response_exchange.publish( {account.account => { contract: working_order.contract.serialize_rabbit, 
+				@response_exchange.publish( {account.account => { contract: serialized_contract, 
 																									 message: "Order placed: #{working_order.action} #{working_order.total_quantity} @ #{order.limit_price} / #{order.aux_price} on #{contract.to_human}" }}.to_json , 
 																									 routing_key: 'place' )
 						end
 					rescue Timeout::Error
-						@error_exchange.publish( {account.account => { contract: contract.serialize_rabbit, 
+						@error_exchange.publish( {account.account => { contract: serialized_contract, 
 																										 message: "submitted order not returned by tws" }}.to_json , 
 																										 routing_key: 'place' )
 					end

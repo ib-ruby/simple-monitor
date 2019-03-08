@@ -20,8 +20,9 @@ class Client
 		# a block has access to the raw-structure
 		make_default if  @yaml.nil? &&  !File.exists?(filename) 
 		@yaml ||= YAML.load_file(filename) 
+		return(nil) if key.to_sym != :all && @yaml[key.to_sym].nil?
 		if block_given?
-			yield 	key.to_sym  == :all ? @yaml : @yaml[key.to_sym]
+			yield 	key.to_sym  == :all ? @yaml : @yaml[key.to_sym] 
 		else
 			key.to_sym  == :all ? @yaml.dup  : @yaml[key.to_sym].dup
 		end
@@ -34,10 +35,11 @@ class Client
 	# 	content = {:Ratio=>0.3, :J36=>0, :GE=>0, :NEU=>10, :ZN=>3}
 	# 	the_client.change_default( topic ){  content }     == overwrite   
 	def change_default topic
-		unmodified_defaults =  read_defaults[:Anlageschwerpunkte][topic.to_sym]
-		@yaml[ :Anlageschwerpunkte ][ topic.to_sym ].merge! yield( unmodified_defaults )
-		filename.open( 'w' ){|f| f.write @yaml.to_yaml}
-		@yaml[ :Anlageschwerpunkte ][ topic.to_sym ]	 #  return complete topic
+		if	unmodified_defaults =  read_defaults(:Anlageschwerpunkte){ |x| x[topic.to_sym]}
+			@yaml[ :Anlageschwerpunkte ][ topic.to_sym ].merge! yield( unmodified_defaults )
+			filename.open( 'w' ){|f| f.write @yaml.to_yaml}
+			@yaml[ :Anlageschwerpunkte ][ topic.to_sym ]	 #  return complete topic
+		end  #  don't do anything, if »Anlageschwerpunkte« is absent
 	end
 
 	def remove_symbol topic, symbol
@@ -48,11 +50,12 @@ class Client
 
 
 	def category
-		read_defaults[:Kategorie] &.upcase || "100K"
+		read_defaults(:Kategorie){|x| x.upcase} || "100K"
 	end
 	def make_default
 		y = { Konto:{ ID: @account.account, alias: @account.alias },
 				Absicht: 'langfristiger Kapitalaufbau',
+				Kategorie: '30K',
 				Anlageschwerpunkte: { BuyAndHold: {  Ratio: 0.6,
 																				     BXB: 0 },
 															Trend: { Ratio: 0.3,  J36: 0 },
@@ -77,18 +80,22 @@ class Client
 	#  --> => {:BuyAndHold=>0.6, :Trend=>0.3, :Hedge=>0.1, :Currency=>0.5, :Stillhalter=>0.4, :Spreads=>0.4, :Bond=>0.7}
 	#  size 'GE'
 	#   => {:Trend=>0} 
+	#
+	# if »Anlageschwerpunkte« is not defined in yaml, an empty Hash is returned
+	#
+	#
 	def size symbol
 		read_defaults( :Anlageschwerpunkte ) do | y |
-			y.map{|y,x| [y , x[symbol.to_sym] ] if x[symbol.to_sym].present?}.compact.to_h
-		end
+					y.map{|y,x| [y , x[symbol.to_sym] ] if x.is_a?(Hash) && x[symbol.to_sym].present?}.compact.to_h 	
+		end || {}
 	end
 
 	def calculate_position order,contract, focus 	#  returns the calculated position size
 #		round_capital = ->(z){ z.round -((z.to_i.to_s.size) -2) }
 		round_capital = ->(z){ z.round -(Math.log10(z).to_i)+1 }  # just the first two digits, rest "0"
-		return(0) if 	 read_defaults( :Anlageschwerpunkte )[focus.to_sym].nil?
+		return(0) if 	 read_defaults( :Anlageschwerpunkte ){|x| x[focus.to_sym]}.nil?
 
-		size =  read_defaults( :Anlageschwerpunkte )[focus.to_sym][contract.symbol.to_sym] || 0
+		size =  read_defaults( :Anlageschwerpunkte ){ |x| x[focus.to_sym][contract.symbol.to_sym]} || 0
 		
 		if size == -1 
 			#  automatic determination
