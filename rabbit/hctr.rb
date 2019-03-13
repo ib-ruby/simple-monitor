@@ -59,7 +59,7 @@ class  HCTR
 				end
 		end
 	
-	def pending_orders
+	def pending_orders  ## Pending orders 
 		IB::Gateway.current.update_orders				 # read pending_orders
 		sleep 1
 		IB::Gateway.current.active_accounts.map( &:orders ).flatten.compact
@@ -77,7 +77,7 @@ class  HCTR
 		end
 		IB::Gateway.current.active_accounts.each do | account |
 					actual_size =  contract_size[account,contract]
-					if actual_size.zero?
+					if actual_size.nil? || actual_size.zero?
 						rc= Client.new(account)
 						the_size = rc.calculate_position order, contract, focus
 					else
@@ -319,11 +319,7 @@ class  HCTR
 						gw.active_accounts.each{|a|	@response_exchange.publish(a.to_json, routing_key: kind ) }
 					end
 				when /pending/
-					pending_orders.each do | o |
-						@response_exchange.publish( { account: o.account, 
-																		order:  o.serialize_rabbit}.to_json,
-																		routing_key: kind )
-					end
+					IB::Gateway.current.update_orders				 # read pending_orders and notify via Open-Orders
 				when 'account-data', 'positions'
 					gw.active_accounts.each do | account |
 						gw.get_account_data account
