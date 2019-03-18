@@ -212,6 +212,7 @@ class  HCTR
 			begin
 			 account.close order: IB::Order.duplicate(order), contract: contract
 			rescue IB::Error => e # no portfoliodata or contract not obtained
+			@error_exchange.publish( {account.account => { contract: contract, message: e }}.to_json , routing_key: 'close-position' )
 				logger.error e.inspect
 				if nr.zero?
 					nr = nr +1
