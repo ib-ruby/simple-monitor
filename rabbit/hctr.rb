@@ -208,7 +208,21 @@ class  HCTR
 	end
 	def close_the_contract order, contract
 		IB::Gateway.current.active_accounts.each do | account |
+			nr = 0
+			begin
 			 account.close order: IB::Order.duplicate(order), contract: contract
+			rescue IB::Error => e # no portfoliodata or contract not obtained
+				logger.error e.inspect
+				if nr.zero?
+					nr = nr +1
+					contract.verify!
+					gw.get_account_data account
+					resume 
+				else
+					raise
+				end
+			end
+
 		end
 	end
 
