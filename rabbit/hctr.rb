@@ -218,7 +218,7 @@ class  HCTR
 					nr = nr +1
 					contract.verify!
 					gw.get_account_data account
-					resume 
+					retry 
 				else
 					raise
 				end
