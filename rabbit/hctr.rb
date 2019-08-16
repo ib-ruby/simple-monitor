@@ -271,7 +271,8 @@ class  HCTR
 					IB::Gateway.current.active_accounts.each do | account |
 						rc =  Client.new(account)
 						@response_exchange.publish( { account.account => 
-																			 [ symbol => rc.size(symbol)[watchlist_symbol] ] }.to_json, 
+																			 [ watchlist: watchlist_symbol,
+																				 symbol => rc.size(symbol)[watchlist_symbol] ] }.to_json, 
 																			routing_key: kind  )
 					end
 				when "change_default", "set_default" 
