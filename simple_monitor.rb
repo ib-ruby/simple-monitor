@@ -1,12 +1,14 @@
 require 'bundler/setup'
 require 'ib-gateway'
+require 'ib/symbols'
+require 'ib/market-price'
 require 'camping'
 require 'yaml'
 # reopen Gateway class and add Next-Account-Feature  (to_do: use enumerator to provide this feature)
 module IB
 	class Gateway
 		def next_account account_or_id
-			a =  active_accounts 
+			a =  clients 
 			sa = account_or_id.is_a?(IB::Account) ? account_or_id : a.detect{|x| x.account == account_or_id }
 			the_position = a.index sa
 			a.size==1 ||  the_position == a.size-1  ? a.first : a.at( the_position+1 )  
@@ -25,18 +27,19 @@ module Ibo::Helpers
 			end
 
 			host, client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] } # client_id 0 gets any open order
-			iib=IB::Gateway.new(  host: host, client_id: client_id, 
-											logger: Logger.new('simple-monitor.log') , 
+			gw=IB::Gateway.new(  host: host, client_id: client_id,	serial_array: true,
+											logger: Logger.new('simple-monitor.log') ,
 											watchlists: read_tws_alias(:watchlist),
 											get_account_data: true ) do |g|
 												g.logger.level=Logger::INFO
 												g.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
 											end
-			iib.update_orders				 # read pending_orders
+			gw.update_orders				 # read pending_orders
 			excluded_accounts = read_tws_alias(:exclude)
-			excluded_accounts.keys.each{| a | iib.for_selected_account(a.to_s){|x| x.disconnect! }} if excluded_accounts.present?			# don't handle excluded Accounts
-			iib.active_accounts.each{ |a| set_alias[a]} 
-			set_alias[iib.advisor]
+#i			excluded_accounts.keys.each{| a | iib.for_selected_account(a.to_s){|x| x.disconnect! }} if excluded_accounts.present?			# don't handle excluded Accounts
+			gw.clients.each{ |a| set_alias[a]} 
+			set_alias[gw.advisor]
+      update_account_data
 		end
 		IB::Gateway.current # return_value
 	end
@@ -45,21 +48,29 @@ module Ibo::Helpers
 		allow_blank && ( account.account == account.account ) ? "" : account.alias # return_value
 	end
 
+	def update_account_data
+    # will be called from »gw-helper«, thus gw may not be initialized
+	IB::Gateway.logger.info{ "updating account data" }	
+		IB::Gateway.current.get_account_data watchlists: watchlists
+		IB::Gateway.current.clients.each do |c|
+			c.portfolio_values.each do  |p|
+				the_contract = IB::Gateway.current.all_contracts.detect{|x| x.con_id.to_i == p.contract.con_id.to_i }
+				the_contract.misc =  p.market_price.to_f.round 3
+			end
+		end
+		IB::Gateway.current.update_orders
+	end
+
 	def locate_contract con_id, account = nil
 		watchlist_entry = -> {watchlists.map{|y| y.detect{|c| c.con_id.to_i == con_id.to_i} rescue nil }.compact.first }
 		c= if account.present?
-				 account.locate_contract( con_id ) || account.complex_position( con_id )
+				 account.locate_contract( con_id.to_i ) || account.complex_position( con_id.to_i )
 			 else
 				 gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
 			 end
-		(c.nil? ? watchlist_entry[] : c).verify!
+		(c.nil? ? watchlist_entry[] : c)
 	end
 
-  def	negative_position account, contract   # returns the negative position-size (if present) or ""
-			pending_order =  account.orders.detect{|o| o.contract == contract}  #  overread pending orders
-			the_p_position = account.portfolio_values.find{|p| p.contract == contract} unless !!pending_order
-			the_p_position.present? ? -the_p_position.position.to_i  : ""
-	end
 
 	def read_tws_alias key=nil, default=nil  # access to yaml-config-file is not cached. Changes
 																					 # take effect immediately after saving the yaml-dataset
@@ -74,30 +85,32 @@ module Ibo::Helpers
 
 	def watchlists # returns an array of preallocated watchlists [IB::Symbols.Class, ... ]
 		the_lists = read_tws_alias :watchlist,  [:Currencies]
-		the_lists.map{ |x|  IB::Symbols.allocate_collection( x ) rescue nil }.compact  
+		the_lists.map{ |x|  IB::Symbols.allocate_collection( x ) rescue nil }.compact
 	end
 
 	def all_contracts *sort
 		sort = [ :sec_type ] if sort.empty?
 		sort.map!{ |x| x.is_a?(Symbol) ? x : x.to_sym  }
-		gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} } 
+		gw.all_contracts.sort_by{|x| sort.map{|s| x.send(s)} }
 	end
 
 	def contract_size account,contract  # used to assign the allocated amount to individual accounts
 		v= account.portfolio_values.detect{|x| x.contract == contract }
-		v.present? ? v.position.to_i : 0 
+		v.present? ? v.position.to_i : 0
+	end
+
+	def valid_price? element   # element is  a hash with keys: limit_price and aux-prcie
+     (element['limit_price'].to_i.abs  | element['aux_price'].to_i.abs) > 0
 	end
 
 	def initialize_watchlist_and_account account_id
 		@watchlists =  watchlists.map{|w| w.all.send(:size) >0 ?  w : nil }.compact  # omit empty watchlists
-		@account= nil; gw.for_selected_account(account_id){|a| @account = a } 
-		@next_account = gw.next_account(@account) 
+		@account=  gw.clients.detect{|a| a.account == account_id}
+		@next_account = gw.next_account(@account)
 	end
 
-	def read_order_status  # returns the count of detected orderstatus-messages since the first method call
-		@orderstatus ||=0
-		gw.tws.subscribe( :OrderStatus ){ @orderstatus +=1 }  if  @orderstatus.zero?
-		@orderstatus #  returns the orderstatus
+	def read_order_status  # returns the count of detected orderstatus-messages 
+    (gw.tws.received[:OrderStatus] || []).size
 	end
 end
 
@@ -105,16 +118,16 @@ module Ibo::Controllers
   class Index < R '/'
 		def get
 			@watchlists =  watchlists
-			if gw.active_accounts.size ==1 	# if a single - user-account is accessed
-				@account =  gw.active_accounts.first     
+			if gw.clients.size ==1	# if a single - user-account is accessed
+				@account =  gw.clients.first
 				render :show_account
 			else
-				@accounts = gw.active_accounts
+				@accounts = gw.clients
 				render  :show_contracts
 			end
 		rescue IB::TransmissionError  => e
 			@the_error_message = e
-			render :show_error 
+			render :show_error
 		end
 	end
 
@@ -124,7 +137,7 @@ module Ibo::Controllers
 			if gw.check_connection
 				view_to_render = :show_contracts # :show_account 
 				@watchlists =  watchlists
-				@accounts = gw.active_accounts
+				@accounts = gw.clients
 				case action.split('/').first.to_sym
 				when :disconnect
 					gw.disconnect
@@ -133,9 +146,9 @@ module Ibo::Controllers
 				when :lists
 
 				when :reload , :connect	
-					gw.for_active_accounts{|a| a.update_attribute :last_updated, nil } # force account-data query
-					gw.get_account_data watchlists: watchlists
-					gw.update_orders
+					gw.tws.clear_received 
+					gw.clients.each{|a| a.update_attribute :last_updated, nil } # force account-data query
+					update_account_data
 				when :contracts 
 					gw.update_orders
 				end  # case
@@ -151,7 +164,7 @@ module Ibo::Controllers
 	def init_account_values	
 		account_value = ->(item) do 
 			gw.get_account_data( @account, watchlists: watchlists )
-			@account.simple_account_data_scan(item)
+			@account.account_data_scan(item)
 			.map{|y| [y.value,y.currency] unless y.value.to_i.zero? }
 			.compact 
 			.sort{ |a,b| b.last == 'BASE' ? 1 :  a.last  <=> b.last } # put base element in front
@@ -179,6 +192,7 @@ module Ibo::Controllers
 	 def get account_id,  con_id
 		 initialize_watchlist_and_account account_id
 		 @contract = @account.locate_contract( con_id) || @account.complex_position( con_id )
+		 gw.logger.info{ "CloseContract  #{@contract.misc}"  }
 		render  :contract_mask
 	 end
  end
@@ -186,10 +200,11 @@ module Ibo::Controllers
  class CloseAllN
 	 def get con_id
 		 if gw.check_connection
-			 @contract = gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
-			 @contract.market_price  unless @contract.misc.present? # put the price into the misc-attribute 
-			 @sizes =  gw.active_accounts.map{ |a| contract_size( a , @contract ) }   # contract_size is a helper method
-			 @accounts = gw.active_accounts
+			 @contract = locate_contract(con_id) # gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
+			 render :show_error unless @contract.is_a?  IB::Contract
+		#	 @contract.misc= @contract.market_price  unless @contract.misc.present? # put the price into the misc-attribute 
+			 @sizes =  gw.clients.map{ |a| contract_size( a , @contract ) }   # contract_size is a helper method
+			 @accounts = gw.clients
 			 render  :close_contracts
 		 else
 			 @error_message =  'No Connection'
@@ -204,8 +219,8 @@ module Ibo::Controllers
 			 the_watchlist = -> {IB::Symbols.allocate_collection input.keys.first.to_sym }
 			 initialize_watchlist_and_account account_id
 			 # input (a) --> Hash: Watchlist_name => symbol as string
-			 #       (b) --> Hash of qualified contract attributes from formular 
-			 @contract = if  @watchlists.map(&:to_human).include? input.keys.first   
+			 #       (b) --> Hash of qualified contract attributes from formular
+			 contract = if  @watchlists.map(&:to_human).include? input.keys.first
 										 begin
 											 @the_selected_watchlist = Integer input.values.first  #raises ArgumentError if alpanumeric
 											 the_contract=the_watchlist[][@the_selected_watchlist]
@@ -215,10 +230,11 @@ module Ibo::Controllers
 									 else
 										 @input[:right] = @input['right'][0].upcase if input['sec_type']=='option'
 										 @input[:sec_type] = @input['sec_type'].to_sym
-										 IB::Contract.build @input 
+										 IB::Contract.build @input
 									 end
-			 @contract.verify!   # ensure the presence of  con_id
-			 gw.for_selected_account(account_id){|a| a.contracts.update_or_create @contract, :con_id } unless @contract.con_id <0
+			 @contract = contract.verify &.first
+			 @contract.misc = @contract.market_price if @contract.is_a?(IB::Contract)
+			 gw.clients.detect{|a| a.account == account_id} &.contracts.update_or_create( @contract, :con_id)  unless  @contract.con_id <0
 			 render  :contract_mask
 		 else
 			 @error_message =  'No Connection'
@@ -230,15 +246,24 @@ module Ibo::Controllers
 	class MultiOrderN
 		def post con_id
 			if gw.check_connection
-				contract =  gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }
+				contract =  locate_contract(con_id)
 				order_fields =  @input.reject{|x| x=='total_quantity'}   # all other input-fields
 				count_of_order_state = read_order_status
 				gw.tws.update_next_order_id
-				@input['total_quantity'].each do |x,y| 
-					gw.for_selected_account(x){|a| a.place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1}
+				number_of_transmitted_orders = 0
+				@input['total_quantity'].each do |x,y|
+					account =  gw.clients.detect{|a| a.account == x}
+					unless  y.nil? || y.to_s.empty? || y.to_i.zero? || !valid_price?(order_fields) ||  !account.is_a?(IB::Account)
+						account.place_order( order: IB::Order.new(order_fields.merge total_quantity: y), contract: contract, convert_size: true ); sleep 0.1
+						number_of_transmitted_orders +=1
+					end
 				end
-				i=0; loop{ break if read_order_status >= @input['total_quantity'].size + count_of_order_state || i> 30; sleep 0.2; i=i+1 }
+				i=0; loop do
+					break if read_order_status >= number_of_transmitted_orders + count_of_order_state || i> 30
+					sleep 0.2; i=i+1
+				end
 				gw.update_orders
+				gw.tws.clear_received    # reset received-array
 				redirect Index
 			else
 				@error_message =  'No Connection'
@@ -246,50 +271,51 @@ module Ibo::Controllers
 			end
 		end
 	end
- class OrderXX 
-	 def get account_id, local_id  # (Get-Request) used  to cancel an order
-		 if gw.check_connection
-			 gw.for_selected_account(account_id) do |account|
-				 order = account.locate_order local_id: local_id.to_i 
-				 if order.is_a? IB::Order
-					 gw.cancel_order order 
-					 sleep 1 
-				 else
-					 gw.logger.error{ "Unable to cancel specified Order( local_id: #{local_id} )" }
-				 end
-			 end
-			 gw.update_orders # outside of mutex-env.
-			 redirect  R(SelectAccountX, account_id)
-		 else
-			 @error_message =  'No Connection'
-			 render :show_error
-		 end
-	end
 
-
-	def post account_id, con_id  # (POST Request) used to  to place an order
-		if gw.check_connection
-			count_of_order_state_messages = read_order_status
-			gw.for_selected_account(account_id) do |account|
-				contract= locate_contract con_id, account
-				contract = gw.all_contracts.detect{|x| x.con_id.to_i == con_id.to_i }  unless contract.is_a?(IB::Contract)
-				unless contract.is_a?(IB::Contract)
+	class OrderXX
+		def post account_id, con_id  # (POST Request) used to  to place an order
+			if gw.check_connection
+				account = gw.clients.detect{|a| a.account == account_id }
+				contract= locate_contract( con_id )
+				if !contract.is_a?(IB::Contract)
 					render "Placing failed. Contract not evaluated: con_id:  #{con_id}"
+				elsif  !valid_price?(@input)  
+					gw.logger.error{ "Order-size not recognized for #{contract.to_human}" }
 				else
+					count_of_order_state_messages = read_order_status
 					gw.tws.update_next_order_id
 					gw.logger.info { "Placing Order on #{contract.to_human}" }
 					account.place_order	order: IB::Order.new(@input), contract: contract, convert_size: true
+					i=0; loop{ break if read_order_status >  count_of_order_state_messages || i> 30; sleep 0.2; i=i+1 }
+					gw.update_orders
+					gw.tws.clear_received
+					redirect R(SelectAccountX, account_id)
 				end
+			else
+				@error_message =  'No Connection'
+				render :show_error
 			end
-			i=0; loop{ break if read_order_status >  count_of_order_state_messages || i> 30; sleep 0.2; i=i+1 }
-			gw.update_orders
-			redirect R(SelectAccountX, account_id)
-		else
-			@error_message =  'No Connection'
-			render :show_error
 		end
+		def get account_id, local_id  # (Get-Request) used  to cancel an order
+			if gw.check_connection
+				account = gw.clients.detect{|a| a.account == account_id }
+				order = account.locate_order local_id: local_id.to_i 
+				if order.is_a? IB::Order
+					gw.cancel_order order 
+					sleep 1 
+				else
+					gw.logger.error{ "Unable to cancel specified Order( local_id: #{local_id} )" }
+				end
+
+				gw.update_orders # outside of mutex-env.
+				redirect  R(SelectAccountX, account_id)
+			else
+				@error_message =  'No Connection'
+				render :show_error
+			end
+		end
+
 	end
- end
 
  class Style < R '/styles\.css'
    STYLE = File.read(__FILE__).gsub(/.*__END__/m, '')
@@ -390,7 +416,7 @@ module Ibo::Views
 				tr do
 					td 'Size'
 					@accounts.each do |a|
-						td { input type: :text, value: negative_position( a, @contract) , name: "total_quantity[#{a.account}]" }  #a.account };
+						td { input type: :text, value: -contract_size( a, @contract) , name: "total_quantity[#{a.account}]" }  #a.account };
 					end
 				end
 				tr{ td " --- " }
@@ -441,7 +467,7 @@ module Ibo::Views
 				td( colspan:3, align:'left' ) { 'Contract-Mask' }
 			end
 					input_row['exchange', @contract &.contract_detail.present? ? @contract &.contract_detail.long_name : @contract&.to_human]
-					input_row['symbol',  " market price : #{@contract &.market_price}  (delayed)" ]
+					input_row['symbol',  " market price : #{@contract.misc}  (delayed)" ]
 					input_row['currency', @contract &.con_id.to_s.to_i >0  ? " con-id : #{@contract &.con_id}" : '' ]
 					input_row['expiry', @contract &.last_trading_day.present? ? " expiry: #{@contract &.last_trading_day}" : ''] if @contract.is_a?(IB::Future) || @contract.is_a?(IB::Option)
 					input_row['right',   @contract.right ] if @contract.is_a?(IB::Option)  
@@ -523,10 +549,10 @@ module Ibo::Views
 	## order ##
 	def _order_attributes_and_submit
 
-		the_price = -> { @contract.misc }  # holds the market price from the previous query
+		the_price = -> { @contract.misc  || @contract.misc = @contract.market_price}  # holds the market price from the previous query
 		tr do
 			td '(Primary/Limit) Price :'
-			td { input type: :text, value: the_price[] , name: 'limit_price' };
+			td { input type: :text, value: @contract.misc, name: 'limit_price' };
 			td( align: :right ){ '(Aux/Stop) Price  :' }
 			td { input type: :text, value: '' , name: 'aux_price' };
 		end
@@ -557,7 +583,7 @@ module Ibo::Views
 				end
 				tr do
 					td 'Size'
-					td { input type: :text, value: negative_position( @account, @contract) , name: 'total_quantity' };
+					td { input type: :text, value: -contract_size( @account, @contract) , name: 'total_quantity' };
 				end
 				_order_attributes_and_submit
 			end
@@ -588,7 +614,7 @@ module Ibo::Views
 			end + "Order:"
 		end
 		tr do
-			gw.for_selected_account(o.account){|x|	td account_name(x) }
+			td account_name gw.clients.detect{ |a| a.account == o.account }
 			td character[]
 			td o.contract.to_human[1..-2] || "no Contract Info saved"
 			td "#{o.side} #{o.quantity}  #{ o.order_type } #{o.tif}"
@@ -600,9 +626,9 @@ module Ibo::Views
   ## account + portfolio ##
 	def _account_infos( a )
 		tr do
-			_account_value a.simple_account_data_scan('NetLiquidation').first
-			_account_value a.simple_account_data_scan('InitMarginReq').first  
-			_account_value a.simple_account_data_scan('TotalCashValue').first
+			_account_value a.account_data_scan('NetLiquidation').first
+			_account_value a.account_data_scan('InitMarginReq').first  
+			_account_value a.account_data_scan('TotalCashValue').first
 		end
 	end 
 
