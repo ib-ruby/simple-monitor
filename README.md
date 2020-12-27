@@ -31,11 +31,11 @@ of **`IB-Ruby`** to provide additional Contracts.
 
 * Run the provided tmux-startup-script  ( `./start-simple-monitor` )  **or**
 
-*  Run the camping-Server manually and open a browser window at http://localhost:3333
+* Run the camping-Server manually
 ```
 camping simple_monitor.rb -p 3333
 ```
-
+ and open a browser window at http://localhost:3333
 enjoy
 
 
