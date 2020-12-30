@@ -467,7 +467,7 @@ module Ibo::Views
 				td( colspan:3, align:'left' ) { 'Contract-Mask' }
 			end
 					input_row['exchange', @contract &.contract_detail.present? ? @contract &.contract_detail.long_name : @contract&.to_human]
-					input_row['symbol',  " market price : #{@contract.misc}  (delayed)" ]
+					input_row['symbol',  " market price : #{@contract &.misc}  (delayed)" ]
 					input_row['currency', @contract &.con_id.to_s.to_i >0  ? " con-id : #{@contract &.con_id}" : '' ]
 					input_row['expiry', @contract &.last_trading_day.present? ? " expiry: #{@contract &.last_trading_day}" : ''] if @contract.is_a?(IB::Future) || @contract.is_a?(IB::Option)
 					input_row['right',   @contract.right ] if @contract.is_a?(IB::Option)  
