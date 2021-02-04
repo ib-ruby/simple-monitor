@@ -16,6 +16,12 @@ module IB
 	end
 end
 
+
+##############
+#
+# The gateway-instance is always present through gw
+#
+#
 Camping.goes :Ibo
 
 module Ibo::Helpers
@@ -50,15 +56,15 @@ module Ibo::Helpers
 
 	def update_account_data
     # will be called from »gw-helper«, thus gw may not be initialized
-	IB::Gateway.logger.info{ "updating account data" }	
-		IB::Gateway.current.get_account_data watchlists: watchlists
-		IB::Gateway.current.clients.each do |c|
+	  gw.logger.info{ "updating account data" }	
+		gw.get_account_data watchlists: watchlists
+		gw.clients.each do |c|
 			c.portfolio_values.each do  |p|
 				the_contract = IB::Gateway.current.all_contracts.detect{|x| x.con_id.to_i == p.contract.con_id.to_i }
 				the_contract.misc =  p.market_price.to_f.round 3
 			end
 		end
-		IB::Gateway.current.update_orders
+		gw.update_orders
 	end
 
 	def locate_contract con_id, account = nil
@@ -105,8 +111,8 @@ module Ibo::Helpers
 
 	def initialize_watchlist_and_account account_id
 		@watchlists =  watchlists.map{|w| w.all.send(:size) >0 ?  w : nil }.compact  # omit empty watchlists
-		@account=  gw.clients.detect{|a| a.account == account_id}
-		@next_account = gw.next_account(@account)
+		@account=  gw.clients.size ==1 ?  gw.clients.first : gw.clients.detect{|a| a.account == account_id}
+		@next_account = gw.clients.size == 1 ? nil : gw.next_account(@account)
 	end
 
 	def read_order_status  # returns the count of detected orderstatus-messages 
@@ -120,7 +126,8 @@ module Ibo::Controllers
 			@watchlists =  watchlists
 			if gw.clients.size ==1	# if a single - user-account is accessed
 				@account =  gw.clients.first
-				render :show_account
+				@contract= @account.contracts.first
+				render :contract_mask # show_account
 			else
 				@accounts = gw.clients
 				render  :show_contracts
@@ -149,6 +156,11 @@ module Ibo::Controllers
 					gw.tws.clear_received 
 					gw.clients.each{|a| a.update_attribute :last_updated, nil } # force account-data query
 					update_account_data
+					if gw.clients.size ==1
+						view_to_render = :contract_mask 
+						@account =  gw.clients.first
+						@contract= @account.contracts.first
+					end
 				when :contracts 
 					gw.update_orders
 				end  # case
@@ -347,13 +359,13 @@ module Ibo::Views
 		table do
 			tr.exited do
 				td { "Contracts" }
-				@accounts.each{|account| td.number { a account_name(account), href: R(SelectAccountX, account.account) } }
+			IB::Gateway.current.clients.each{|account| td.number { a account_name(account), href: R(SelectAccountX, account.account) } }
 			end
 			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | c |
 				if c.con_id.present? && c.con_id > 0 
 					tr do
 						td{  a c.to_human[1..-2], href: R(CloseAllN, c.con_id)  }
-						@accounts.each{|a| td.number contract_size(a,c) } 
+						gw.clients.each{|a| td.number contract_size(a,c) } 
 					end 
 				end
 			end
@@ -467,7 +479,7 @@ module Ibo::Views
 				td( colspan:3, align:'left' ) { 'Contract-Mask' }
 			end
 					input_row['exchange', @contract &.contract_detail.present? ? @contract &.contract_detail.long_name : @contract&.to_human]
-					input_row['symbol',  " market price : #{@contract &.misc}  (delayed)" ]
+					input_row['symbol',  " market price : #{@contract.misc}  (delayed)" ]
 					input_row['currency', @contract &.con_id.to_s.to_i >0  ? " con-id : #{@contract &.con_id}" : '' ]
 					input_row['expiry', @contract &.last_trading_day.present? ? " expiry: #{@contract &.last_trading_day}" : ''] if @contract.is_a?(IB::Future) || @contract.is_a?(IB::Option)
 					input_row['right',   @contract.right ] if @contract.is_a?(IB::Option)  

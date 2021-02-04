@@ -24,7 +24,7 @@ $tmux send-keys -t 1 'tail -f simple-monitor.log'  enter C-l
 
 #tmux resize-pane -t 1 -U 10  enter
 #
-$tmux send-keys -t 0 'sleep 1' enter 
+$tmux send-keys -t 0 'sleep 5' enter 
 $tmux send-keys -t 0 'elinks http://localhost:3333' enter 
 #
 $tmux select-pane -t $SESSION:0
