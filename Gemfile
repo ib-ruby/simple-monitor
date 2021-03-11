@@ -2,7 +2,7 @@ source "https://rubygems.org"
 gem 'activesupport'
 gem 'activemodel'
 #gem 'mail'
-gem 'thin'
+gem 'webrick'
 gem 'ox'
 gem 'ib-api', :git=> 'https://github.com/ib-ruby/ib-api.git'
 gem 'ib-extensions',  git: 'https://github.com/ib-ruby/ib-extensions.git'
