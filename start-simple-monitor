@@ -1,5 +1,6 @@
 #! /bin/bash
-SESSION=simple-monitorw
+SESSION=simple-monitor
+WORKING_DIR=~/simple-monitor
 # tmux mit 256 Farbunterstützung, Loginshell und UTF8-Support verwenden
 tmux='tmux -2 -l -u' #
 # if the session is already running, just attach to it.
@@ -19,6 +20,7 @@ $tmux split-window -d -t $SESSION:0 -v -p 25
 #$tmux split-window -d  -p 10 -t $SESSION:0 -v
 #
 $tmux send-keys -t 1 'rvm use 3' enter  C-l
+$tmux send-keys -t 1 "cd  $WORKING_DIR" enter C-l
 $tmux send-keys -t 1 'camping simple_monitor.rb -p 3333 &'  enter C-l
 $tmux send-keys -t 1 'tail -f simple-monitor.log'  enter C-l
 
