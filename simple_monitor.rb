@@ -25,23 +25,29 @@ end
 Camping.goes :Ibo
 
 module Ibo::Helpers
-	def gw  # returns the gateway-object or creates it and does basic bookkeeping
+	def gw logger=nil # returns the gateway-object or creates it and does basic bookkeeping
 		if IB::Gateway.current.nil?   # only the first time ...
 			set_alias = ->(account) do  # lambda to transfer alias name from yaml-file to account.alias
-				yaml_alias = read_tws_alias{ |s| s[:user][account.account]} 
+				yaml_alias = read_config{ |s| s[:user][account.account]} 
 				account.alias = yaml_alias if yaml_alias.present? && !yaml_alias.empty?
 			end
 
-			host, client_id = read_tws_alias{|s| [ s[:host].present? ? s[:host] :'localhost', s[:client_id].present? ? s[:client_id] :0 ] } # client_id 0 gets any open order
-			gw=IB::Gateway.new(  host: host, client_id: client_id,	serial_array: true,
-											logger: Logger.new('simple-monitor.log') ,
-											watchlists: read_tws_alias(:watchlist),
-											get_account_data: true ) do |g|
+			gateway_parameter =  read_config{|s| s[:gateway]}
+			gateway_parameter[:logger] = logger || Logger.new('simple-monitor.log')  
+			unless block_given?
+			gateway_parameter[:client_id] -=1 if gateway_parameter[:client_id].present? && !gateway_parameter[:client_id] .zero?
+			else
+				gateway_parameter[:client_id]= yield
+			end
+			gateway_parameter[:get_account_data] = true 
+			gateway_parameter[:serial_array] =true
+
+			gw=IB::Gateway.new(  **gateway_parameter) do |g|
 												g.logger.level=Logger::INFO
 												g.logger.formatter = proc {|severity, datetime, progname, msg| "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n" }
 											end
 			gw.update_orders				 # read pending_orders
-			excluded_accounts = read_tws_alias(:exclude)
+			excluded_accounts = read_config(:exclude)
 #i			excluded_accounts.keys.each{| a | iib.for_selected_account(a.to_s){|x| x.disconnect! }} if excluded_accounts.present?			# don't handle excluded Accounts
 			gw.clients.each{ |a| set_alias[a]} 
 			set_alias[gw.advisor]
@@ -51,7 +57,15 @@ module Ibo::Helpers
 	end
 
 	def account_name account, allow_blank: false  # returns an Alias (if not given the AccountID)
-		allow_blank && ( account.account == account.account ) ? "" : account.alias # return_value
+		if	allow_blank
+			if  account.alias.nil?
+				account.account
+			else
+				"#{ account.alias } ( #{account.account} )"
+			end
+		else
+			account.alias.presence || account.account
+		end
 	end
 
 	def update_account_data
@@ -78,10 +92,10 @@ module Ibo::Helpers
 	end
 
 
-	def read_tws_alias key=nil, default=nil  # access to yaml-config-file is not cached. Changes
+	def read_config key=nil, default=nil  # access to yaml-config-file is not cached. Changes
 																					 # take effect immediately after saving the yaml-dataset
 																					 # a block has access to the raw-structure
-		structure = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml') : nil
+		structure = File.exists?( 'config.yml') ?  YAML.load_file('config.yml') : nil
 		if block_given? && !!structure
 			yield structure
 		else
@@ -90,7 +104,7 @@ module Ibo::Helpers
 	end
 
 	def watchlists # returns an array of preallocated watchlists [IB::Symbols.Class, ... ]
-		the_lists = read_tws_alias :watchlist,  [:Currencies]
+		the_lists = read_config :watchlist,  [:Currencies]
 		the_lists.map{ |x|  IB::Symbols.allocate_collection( x ) rescue nil }.compact
 	end
 
@@ -359,7 +373,7 @@ module Ibo::Views
 		table do
 			tr.exited do
 				td { "Contracts" }
-			IB::Gateway.current.clients.each{|account| td.number { a account_name(account), href: R(SelectAccountX, account.account) } }
+		  	gw.clients.each{|account| td.number{ a account_name(account), href: R(SelectAccountX, account.account)}}
 			end
 			all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | c |
 				if c.con_id.present? && c.con_id > 0 
@@ -378,7 +392,7 @@ module Ibo::Views
 		table do
 			if @account.present? && @account.account_values.present? 
 				tr( class:  "lines") do
-					td( colspan: 1) { @account.account }
+					td( colspan: 4) { account_name  @account, allow_blank: true }
 					td( colspan: 2) { account_name  @account, allow_blank: true }
 					td.number( colspan: 3){ "Last Update: #{@account.last_updated.strftime("%d.%m. %X")}" } 
 					td.number { a "Next: #{account_name(@next_account)}", href: R(SelectAccountX, @next_account.account)	if @next_account.present?}

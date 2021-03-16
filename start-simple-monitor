@@ -31,4 +31,7 @@ $tmux send-keys -t 0 'elinks http://localhost:3333' enter
 #
 $tmux select-pane -t $SESSION:0
 
-$tmux	attach -t $SESSION
+## if any parameter is given, do not attach to the session
+if test -n ${1} ; then
+	$tmux	attach -t $SESSION
+fi
