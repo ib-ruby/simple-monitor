@@ -9,10 +9,13 @@ First an overview of any Portfolio-Position in every Account is displayed (only 
 You can select all Accounts. Basic information, such as *NetLiquidation*, the used *Margin* and *Available Cash*  are shown.  All Portfolio-Positions  (Contracts) are displayed. 
 
 
-A *Simple Form* to place an emergency-order (i.e. a "Close-Position"-Feature) is provided, too. New Positions can be established through their basic properties (see below). In practice, one would use the [Watchlist](ib-ruby/ib-ruby/wiki/Watchlists) feature 
-of **`IB-Ruby`** to provide additional Contracts. 
+A *Simple Form* to place an emergency-order (i.e. a "Close-Position"-Feature) is provided, too. New Positions can be established through their basic properties (see below). In practice, one would use the [Watchlist](https://ib-ruby.github.io/ib-doc/watchlists.html) feature to provide additional Contracts. 
 
 #### Getting Started
+
+* **Setup your environment through [IB-Container](https://github.com/ib-ruby/ib-container).**  
+  
+  or
 
 * Install Ruby 2.6+ (via rvm), tmux and elinks.
 
@@ -23,7 +26,7 @@ of **`IB-Ruby`** to provide additional Contracts.
 
 * Start a TWS or a Gateway (TWS must fullfil the requirements of ›› [IB-RUBY]( https://ib-ruby.github.io/ib-doc/) ‹‹).
 
-* Edit `tws-alias.yml`  and change the `:host`-Entry to the host running the TWS/Gateway (eg. `localhost:7496`).
+* Edit `config.yml`  and change the `:host`-Entry to the host running the TWS/Gateway (eg. `localhost:7496`).
   If a connection is made with the Gateway, specify that port, too, eg `localhost:4001`. If no Account-Alias is set in 
   Account-Management, local Aliases can be specified in the yaml-dataset.
 
@@ -47,7 +50,7 @@ If a User is selected or only one User is present, a detail-page is displayed
 ![Screenshot](simple-monitor_detail.png)
 
 #### Tmux Startup Script
-First edit `./start-_simple-monitor` and check if the provided pathes fit your environment.
+First edit `./start-simple-monitor` and check if the provided pathes fit your environment.
 
 This is the expected output
 ![Screenshot](simple-monitor-tmux.png)
